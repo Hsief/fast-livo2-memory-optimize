@@ -102,6 +102,8 @@ public:
   size_t path_max_poses = 1500;
   int path_pub_interval = 5;
   double diagnostics_interval_sec = 1.0;
+  double viz_voxel_size = 0.25;
+  int viz_publish_interval = 1;
 
   double visual_map_voxel_size = 0.5;
   int visual_map_half_size = 50;
@@ -167,6 +169,7 @@ public:
   ofstream fout_pre, fout_out, fout_visual_pos, fout_lidar_pos, fout_points;
 
   pcl::VoxelGrid<PointType> downSizeFilterSurf;
+  pcl::VoxelGrid<PointType> downSizeFilterViz;
 
   V3D euler_cur;
 
