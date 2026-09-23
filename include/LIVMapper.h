@@ -42,6 +42,7 @@ public:
   void printRuntimeDiagnostics();
   void initializeRuntimeLog();
   long readProcStatusValue(const std::string &key) const;
+  long readMemInfoValue(const std::string &key) const;
   
   bool sync_packages(LidarMeasureGroup &meas);
   void prop_imu_once(StatesGroup &imu_prop_state, const double dt, V3D acc_avr, V3D angvel_avr);
@@ -106,7 +107,7 @@ public:
   int path_pub_interval = 5;
   double diagnostics_interval_sec = 1.0;
   bool runtime_log_to_file = true;
-  int runtime_log_flush_interval = 5;
+  int runtime_log_flush_interval = 1;
   unsigned long long runtime_log_rows = 0;
   std::string runtime_log_path;
   std::ofstream runtime_log_file;
