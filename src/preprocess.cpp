@@ -99,25 +99,17 @@ void Preprocess::avia_handler(const livox_ros_driver::CustomMsg::ConstPtr &msg)
   pl_full.clear();
   double t1 = omp_get_wtime();
   int plsize = msg->point_num;
-  static unsigned long long avia_frame_counter = 0;
-  const bool report_stats = (++avia_frame_counter % 50ULL) == 0ULL;
-  if (report_stats) printf("[ Preprocess ] Input point number: %d \n", plsize);
+  printf("[ Preprocess ] Input point number: %d \n", plsize);
+  // printf("point_filter_num: %d\n", point_filter_num);
 
-  // For normal AVIA operation feature extraction is disabled. Do not reserve
-  // a full-scan buffer for every laser line in that case.
-  if (feature_enabled) pl_corn.reserve(plsize);
-  const int filter_num = std::max(1, point_filter_num);
-  pl_surf.reserve(static_cast<size_t>(plsize / filter_num + 64));
+  pl_corn.reserve(plsize);
+  pl_surf.reserve(plsize);
   pl_full.resize(plsize);
 
-  if (feature_enabled)
+  for (int i = 0; i < N_SCANS; i++)
   {
-    const size_t per_line_reserve = static_cast<size_t>(plsize / std::max(1, N_SCANS) + 128);
-    for (int i = 0; i < N_SCANS; i++)
-    {
-      pl_buff[i].clear();
-      pl_buff[i].reserve(per_line_reserve);
-    }
+    pl_buff[i].clear();
+    pl_buff[i].reserve(plsize);
   }
   uint valid_num = 0;
 
@@ -205,7 +197,7 @@ void Preprocess::avia_handler(const livox_ros_driver::CustomMsg::ConstPtr &msg)
       }
     }
   }
-  if (report_stats) printf("[ Preprocess ] Output point number: %zu \n", pl_surf.points.size());
+  printf("[ Preprocess ] Output point number: %zu \n", pl_surf.points.size());
 }
 
 void Preprocess::l515_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
