@@ -112,6 +112,10 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<int>("publish/pub_scan_num", pub_scan_num, 1);
   nh.param<bool>("publish/pub_effect_point_en", pub_effect_point_en, false);
   nh.param<bool>("publish/dense_map_en", dense_map_en, false);
+  nh.param<double>("publish/viz_voxel_size", viz_voxel_size, 0.25);
+  nh.param<int>("publish/viz_publish_interval", viz_publish_interval, 1);
+  viz_voxel_size = std::max(0.0, viz_voxel_size);
+  viz_publish_interval = std::max(1, viz_publish_interval);
 
   nh.param<int>("runtime/lidar_sub_queue_size", lidar_sub_queue_size, 4);
   nh.param<int>("runtime/imu_sub_queue_size", imu_sub_queue_size, 800);
@@ -151,6 +155,8 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
 void LIVMapper::initializeComponents() 
 {
   downSizeFilterSurf.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min);
+  if (viz_voxel_size > 0.0)
+    downSizeFilterViz.setLeafSize(viz_voxel_size, viz_voxel_size, viz_voxel_size);
   extT << VEC_FROM_ARRAY(extrinT);
   extR << MAT_FROM_ARRAY(extrinR);
 
@@ -331,13 +337,13 @@ void LIVMapper::handleVIO()
             << _state.pos_end.transpose() << " " << _state.vel_end.transpose() << " " << _state.bias_g.transpose() << " "
             << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose() << '\n';
     
-  if (pcl_w_wait_pub->empty() || (pcl_w_wait_pub == nullptr)) 
+  if (_pv_list.empty())
   {
-    std::cout << "[ VIO ] No point!!!" << '\n';
+    ROS_WARN_THROTTLE(1.0, "[VIO] no LiDAR map points available for visual update");
     return;
   }
-    
-  ROS_INFO_STREAM_THROTTLE(1.0, "[VIO] raw feature num=" << pcl_w_wait_pub->points.size());
+
+  ROS_INFO_STREAM_THROTTLE(1.0, "[VIO] map feature num=" << _pv_list.size());
 
   if (fabs((LidarMeasures.last_lio_update_time - _first_lidar_time) - plot_time) < (frame_cnt / 2 * 0.1)) 
   {
@@ -477,14 +483,26 @@ void LIVMapper::handleLIO()
     voxelmap_manager->mapSliding();
   }
   
-  if (dense_map_en)
+  const bool need_visual_cloud = (pubLaserCloudFullRes.getNumSubscribers() > 0) || pcd_save_en;
+  if (need_visual_cloud)
   {
-    transformLidar(_state.rot_end, _state.pos_end, feats_undistort, pcl_w_wait_pub);
+    if (dense_map_en)
+    {
+      transformLidar(_state.rot_end, _state.pos_end, feats_undistort, pcl_w_wait_pub);
+    }
+    else if (viz_voxel_size > filter_size_surf_min + 1e-6)
+    {
+      downSizeFilterViz.setInputCloud(feats_down_world);
+      downSizeFilterViz.filter(*pcl_w_wait_pub);
+    }
+    else
+    {
+      *pcl_w_wait_pub = *feats_down_world;
+    }
   }
   else
   {
-    // feats_down_world already contains the post-update world-frame cloud.
-    *pcl_w_wait_pub = *feats_down_world;
+    pcl_w_wait_pub->clear();
   }
 
   publish_frame_world(pubLaserCloudFullRes, vio_manager);
@@ -1245,7 +1263,10 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
 {
   if (pcl_w_wait_pub->empty()) return;
 
-  const bool has_cloud_subscriber = pubLaserCloudFullRes.getNumSubscribers() > 0;
+  static unsigned long long viz_pub_counter = 0;
+  const bool has_cloud_subscriber =
+      pubLaserCloudFullRes.getNumSubscribers() > 0 &&
+      ((++viz_pub_counter % static_cast<unsigned long long>(viz_publish_interval)) == 0);
   // If neither visualization nor PCD export needs this cloud, avoid colorization
   // and ROS serialization completely.
   if (!has_cloud_subscriber && !pcd_save_en)
