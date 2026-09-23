@@ -227,7 +227,7 @@ void VIOManager::getImagePatch(cv::Mat img, V2D pc, float *patch_tmp, int level)
 void VIOManager::insertPointIntoVoxelMap(VisualPoint *pt_new)
 {
   V3D pt_w(pt_new->pos_[0], pt_new->pos_[1], pt_new->pos_[2]);
-  double voxel_size = 0.5;
+  const double voxel_size = visual_map_voxel_size;
   float loc_xyz[3];
   for (int j = 0; j < 3; j++)
   {
@@ -246,6 +246,169 @@ void VIOManager::insertPointIntoVoxelMap(VisualPoint *pt_new)
     VOXEL_POINTS *ot = new VOXEL_POINTS(0);
     ot->voxel_points.push_back(pt_new);
     feat_map[position] = ot;
+  }
+}
+
+
+size_t VIOManager::visualMapPointCount() const
+{
+  size_t total = 0;
+  for (const auto &kv : feat_map)
+  {
+    if (kv.second) total += kv.second->voxel_points.size();
+  }
+  return total;
+}
+
+void VIOManager::pruneVisualMap()
+{
+  if (!new_frame_ || feat_map.empty()) return;
+
+  ++visual_map_prune_counter;
+  const bool periodic =
+      (visual_map_prune_counter % static_cast<unsigned long long>(std::max(1, visual_map_prune_interval))) == 0ULL;
+  const bool over_voxel_cap =
+      visual_map_max_voxels > 0 && feat_map.size() > static_cast<size_t>(visual_map_max_voxels);
+  if (!periodic && !over_voxel_cap) return;
+
+  const V3D cur_pos = new_frame_->pos();
+  const int64_t cx = static_cast<int64_t>(std::floor(cur_pos.x() / visual_map_voxel_size));
+  const int64_t cy = static_cast<int64_t>(std::floor(cur_pos.y() / visual_map_voxel_size));
+  const int64_t cz = static_cast<int64_t>(std::floor(cur_pos.z() / visual_map_voxel_size));
+
+  size_t removed_voxels = 0;
+  size_t removed_points = 0;
+
+  auto pointFrameId = [](VisualPoint *pt) -> int
+  {
+    if (!pt) return -1;
+    if (pt->has_ref_patch_ && pt->ref_patch) return pt->ref_patch->id_;
+    if (!pt->obs_.empty() && pt->obs_.front()) return pt->obs_.front()->id_;
+    return -1;
+  };
+
+  for (auto it = feat_map.begin(); it != feat_map.end(); )
+  {
+    const VOXEL_LOCATION &loc = it->first;
+    const bool outside =
+        visual_map_half_size > 0 &&
+        (std::llabs(loc.x - cx) > visual_map_half_size ||
+         std::llabs(loc.y - cy) > visual_map_half_size ||
+         std::llabs(loc.z - cz) > visual_map_half_size);
+
+    if (outside)
+    {
+      if (it->second) removed_points += it->second->voxel_points.size();
+      delete it->second;
+      it = feat_map.erase(it);
+      ++removed_voxels;
+      continue;
+    }
+
+    VOXEL_POINTS *bucket = it->second;
+    if (!bucket)
+    {
+      it = feat_map.erase(it);
+      ++removed_voxels;
+      continue;
+    }
+
+    auto &points = bucket->voxel_points;
+
+    // A Feature keeps a cv::Mat reference to its reference image. Expiring old
+    // reference frames is what makes historical image memory reclaimable.
+    for (auto pit = points.begin(); pit != points.end(); )
+    {
+      VisualPoint *pt = *pit;
+      const int ref_id = pointFrameId(pt);
+      const bool too_old =
+          visual_map_max_ref_age_frames > 0 && ref_id >= 0 &&
+          new_frame_->id_ > ref_id + visual_map_max_ref_age_frames;
+      if (too_old)
+      {
+        delete pt;
+        pit = points.erase(pit);
+        ++removed_points;
+      }
+      else
+      {
+        ++pit;
+      }
+    }
+
+    // Bound point density per visual voxel. Pruning happens before current-frame
+    // retrieval, so no active visual_submap pointer can be invalidated here.
+    if (visual_map_max_points_per_voxel > 0 &&
+        points.size() > static_cast<size_t>(visual_map_max_points_per_voxel))
+    {
+      std::stable_sort(points.begin(), points.end(),
+                       [&](VisualPoint *a, VisualPoint *b)
+                       {
+                         return pointFrameId(a) > pointFrameId(b);
+                       });
+      const size_t keep = static_cast<size_t>(visual_map_max_points_per_voxel);
+      for (size_t i = keep; i < points.size(); ++i)
+      {
+        delete points[i];
+        ++removed_points;
+      }
+      points.resize(keep);
+    }
+
+    bucket->count = static_cast<int>(points.size());
+    if (points.empty())
+    {
+      delete bucket;
+      it = feat_map.erase(it);
+      ++removed_voxels;
+    }
+    else
+    {
+      ++it;
+    }
+  }
+
+  // Emergency hard cap: remove farthest visual voxels in one batch.
+  if (visual_map_max_voxels > 0 &&
+      feat_map.size() > static_cast<size_t>(visual_map_max_voxels))
+  {
+    const size_t cap = static_cast<size_t>(visual_map_max_voxels);
+    const size_t target = std::max<size_t>(1, cap * 9 / 10);
+    const size_t remove_count = feat_map.size() - target;
+
+    struct Candidate { double dist2; VOXEL_LOCATION loc; };
+    std::vector<Candidate> candidates;
+    candidates.reserve(feat_map.size());
+    for (const auto &kv : feat_map)
+    {
+      const double dx = static_cast<double>(kv.first.x - cx);
+      const double dy = static_cast<double>(kv.first.y - cy);
+      const double dz = static_cast<double>(kv.first.z - cz);
+      candidates.push_back({dx * dx + dy * dy + dz * dz, kv.first});
+    }
+
+    std::nth_element(candidates.begin(), candidates.begin() + remove_count, candidates.end(),
+                     [](const Candidate &a, const Candidate &b) { return a.dist2 > b.dist2; });
+    for (size_t i = 0; i < remove_count; ++i)
+    {
+      auto fit = feat_map.find(candidates[i].loc);
+      if (fit == feat_map.end()) continue;
+      if (fit->second) removed_points += fit->second->voxel_points.size();
+      delete fit->second;
+      feat_map.erase(fit);
+      ++removed_voxels;
+    }
+  }
+
+  if (removed_points > 0 || removed_voxels > 0)
+  {
+    // warp_map is keyed by Feature id; after point deletion cached entries may be
+    // stale. Rebuild lazily instead of retaining dead cache allocations.
+    for (auto &kv : warp_map) delete kv.second;
+    warp_map.clear();
+
+    ROS_INFO("[NX_VMAP] pruned voxels=%zu points=%zu, remaining voxels=%zu points=%zu",
+             removed_voxels, removed_points, feat_map.size(), visualMapPointCount());
   }
 }
 
@@ -351,22 +514,27 @@ double VIOManager::calculateNCC(float *ref_patch, float *cur_patch, int patch_si
 
 void VIOManager::retrieveFromVisualSparseMap(cv::Mat img, vector<pointWithVar> &pg, const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &plane_map)
 {
-  if (feat_map.size() <= 0) return;
+  // Clear last-frame raw pointers before any visual-map deletion.
+  visual_submap->reset();
+  pruneVisualMap();
+  if (feat_map.empty()) return;
+
   double ts0 = omp_get_wtime();
 
   // pg_down->reserve(feat_map.size());
   // downSizeFilter.setInputCloud(pg);
   // downSizeFilter.filter(*pg_down);
 
-  // resetRvizDisplay();
-  visual_submap->reset();
-
   // Controls whether to include the visual submap from the previous frame.
   sub_feat_map.clear();
 
-  float voxel_size = 0.5;
+  const float voxel_size = static_cast<float>(visual_map_voxel_size);
 
-  if (!normal_en) warp_map.clear();
+  if (!normal_en)
+  {
+    for (auto &kv : warp_map) delete kv.second;
+    warp_map.clear();
+  }
 
   cv::Mat depth_img = cv::Mat::zeros(height, width, CV_32FC1);
   float *it = (float *)depth_img.data;
@@ -899,7 +1067,7 @@ void VIOManager::generateVisualMapPoints(cv::Mat img, vector<pointWithVar> &pg)
 
   // double t_b2 = omp_get_wtime() - t0;
 
-  printf("[ VIO ] Append %d new visual map points\n", add);
+  ROS_INFO_THROTTLE(1.0, "[VIO] appended %d new visual map points", add);
   // printf("pg.size: %d \n", pg.size());
   // printf("B1. : %.6lf \n", t_b1);
   // printf("B2. : %.6lf \n", t_b2);
