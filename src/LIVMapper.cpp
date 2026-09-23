@@ -318,7 +318,7 @@ void LIVMapper::handleVIO()
     return;
   }
     
-  std::cout << "[ VIO ] Raw feature num: " << pcl_w_wait_pub->points.size() << std::endl;
+  ROS_INFO_STREAM_THROTTLE(1.0, "[VIO] raw feature num=" << pcl_w_wait_pub->points.size());
 
   if (fabs((LidarMeasures.last_lio_update_time - _first_lidar_time) - plot_time) < (frame_cnt / 2 * 0.1)) 
   {
@@ -437,11 +437,10 @@ void LIVMapper::handleLIO()
 
   double t3 = omp_get_wtime();
 
-  PointCloudXYZI::Ptr world_lidar(new PointCloudXYZI());
-  transformLidar(_state.rot_end, _state.pos_end, feats_down_body, world_lidar);
-  for (size_t i = 0; i < world_lidar->points.size(); i++) 
+  transformLidar(_state.rot_end, _state.pos_end, feats_down_body, feats_down_world);
+  for (size_t i = 0; i < feats_down_world->points.size(); i++) 
   {
-    voxelmap_manager->pv_list_[i].point_w << world_lidar->points[i].x, world_lidar->points[i].y, world_lidar->points[i].z;
+    voxelmap_manager->pv_list_[i].point_w << feats_down_world->points[i].x, feats_down_world->points[i].y, feats_down_world->points[i].z;
     M3D point_crossmat = voxelmap_manager->cross_mat_list_[i];
     M3D var = voxelmap_manager->body_cov_list_[i];
     var = (_state.rot_end * extR) * var * (_state.rot_end * extR).transpose() +
@@ -449,7 +448,7 @@ void LIVMapper::handleLIO()
     voxelmap_manager->pv_list_[i].var = var;
   }
   voxelmap_manager->UpdateVoxelMap(voxelmap_manager->pv_list_);
-  std::cout << "[ LIO ] Update Voxel Map" << std::endl;
+  ROS_INFO_STREAM_THROTTLE(1.0, "[LIO] voxel map updated, root_voxels=" << voxelmap_manager->voxel_map_.size());
   _pv_list = voxelmap_manager->pv_list_;
   
   double t4 = omp_get_wtime();
@@ -459,15 +458,15 @@ void LIVMapper::handleLIO()
     voxelmap_manager->mapSliding();
   }
   
-  PointCloudXYZI::Ptr laserCloudFullRes(dense_map_en ? feats_undistort : feats_down_body);
-  int size = laserCloudFullRes->points.size();
-  PointCloudXYZI::Ptr laserCloudWorld(new PointCloudXYZI(size, 1));
-
-  for (int i = 0; i < size; i++) 
+  if (dense_map_en)
   {
-    RGBpointBodyToWorld(&laserCloudFullRes->points[i], &laserCloudWorld->points[i]);
+    transformLidar(_state.rot_end, _state.pos_end, feats_undistort, pcl_w_wait_pub);
   }
-  *pcl_w_wait_pub = *laserCloudWorld;
+  else
+  {
+    // feats_down_world already contains the post-update world-frame cloud.
+    *pcl_w_wait_pub = *feats_down_world;
+  }
 
   publish_frame_world(pubLaserCloudFullRes, vio_manager);
   if (pub_effect_point_en) publish_effect_world(pubLaserCloudEffect, voxelmap_manager->ptpl_list_);
@@ -1205,6 +1204,7 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
 
 void LIVMapper::publish_img_rgb(const image_transport::Publisher &pubImage, VIOManagerPtr vio_manager)
 {
+  if (pubImage.getNumSubscribers() == 0) return;
   cv::Mat img_rgb = vio_manager->img_cp;
   cv_bridge::CvImage out_msg;
   out_msg.header.stamp = ros::Time::now();
@@ -1218,6 +1218,17 @@ void LIVMapper::publish_img_rgb(const image_transport::Publisher &pubImage, VIOM
 void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, VIOManagerPtr vio_manager)
 {
   if (pcl_w_wait_pub->empty()) return;
+
+  const bool has_cloud_subscriber = pubLaserCloudFullRes.getNumSubscribers() > 0;
+  // If neither visualization nor PCD export needs this cloud, avoid colorization
+  // and ROS serialization completely.
+  if (!has_cloud_subscriber && !pcd_save_en)
+  {
+    pcl_wait_pub->clear();
+    if (LidarMeasures.lio_vio_flg == VIO) pcl_w_wait_pub->clear();
+    return;
+  }
+
   PointCloudXYZRGB::Ptr laserCloudWorldRGB(new PointCloudXYZRGB());
   static int pub_num = 1;
   pub_num++;
@@ -1271,7 +1282,7 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
   }
   laserCloudmsg.header.stamp = ros::Time::now(); //.fromSec(last_timestamp_lidar);
   laserCloudmsg.header.frame_id = "camera_init";
-  pubLaserCloudFullRes.publish(laserCloudmsg);
+  if (has_cloud_subscriber) pubLaserCloudFullRes.publish(laserCloudmsg);
 
   /**************** save map ****************/
   /* 1. make sure you have enough memories
@@ -1462,7 +1473,8 @@ void LIVMapper::publish_path(const ros::Publisher pubPath)
   }
 
   static unsigned long long path_pub_counter = 0;
-  if ((++path_pub_counter % static_cast<unsigned long long>(path_pub_interval)) == 0)
+  if (pubPath.getNumSubscribers() > 0 &&
+      (++path_pub_counter % static_cast<unsigned long long>(path_pub_interval)) == 0)
   {
     pubPath.publish(path);
   }
