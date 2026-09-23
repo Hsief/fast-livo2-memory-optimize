@@ -20,6 +20,7 @@ which is included as part of this source code package.
 #include <image_transport/image_transport.h>
 #include <nav_msgs/Path.h>
 #include <vikit/camera_loader.h>
+#include <thread>
 
 class LIVMapper
 {
@@ -37,6 +38,17 @@ public:
   void handleLIO();
   void savePCD();
   void processImu();
+
+  struct BackgroundPcdJob
+  {
+    std::string path;
+    PointCloudXYZRGB::Ptr rgb;
+    PointCloudXYZI::Ptr intensity;
+  };
+  void startBackgroundPcdWriter();
+  void stopBackgroundPcdWriter();
+  void backgroundPcdWriterLoop();
+  void enqueueBackgroundPcd(const BackgroundPcdJob &job);
   
   bool sync_packages(LidarMeasureGroup &meas);
   void prop_imu_once(StatesGroup &imu_prop_state, const double dt, V3D acc_avr, V3D angvel_avr);
@@ -138,6 +150,16 @@ public:
   PointCloudXYZI::Ptr pcl_wait_pub;
   PointCloudXYZRGB::Ptr pcl_wait_save;
   PointCloudXYZI::Ptr pcl_wait_save_intensity;
+
+  std::thread background_pcd_thread;
+  std::mutex background_pcd_mutex;
+  std::condition_variable background_pcd_cv;
+  std::deque<BackgroundPcdJob> background_pcd_jobs;
+  bool background_pcd_stop = false;
+  bool background_pcd_started = false;
+  size_t background_pcd_max_jobs = 4;
+  double background_pcd_voxel_size = 0.20;
+  unsigned long long background_pcd_dropped_jobs = 0;
 
   ofstream fout_pre, fout_out, fout_visual_pos, fout_lidar_pos, fout_points;
 
