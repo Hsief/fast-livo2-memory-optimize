@@ -47,11 +47,18 @@ public:
     PointCloudXYZI::Ptr intensity;
   };
 
+  static constexpr int BACKGROUND_VOXEL_CAPACITY = 10;
+
   struct BackgroundColorVoxel
   {
-    double sx = 0.0, sy = 0.0, sz = 0.0;
-    uint64_t sr = 0, sg = 0, sb = 0;
-    uint32_t count = 0;
+    float x[BACKGROUND_VOXEL_CAPACITY] = {0};
+    float y[BACKGROUND_VOXEL_CAPACITY] = {0};
+    float z[BACKGROUND_VOXEL_CAPACITY] = {0};
+    uint8_t r[BACKGROUND_VOXEL_CAPACITY] = {0};
+    uint8_t g[BACKGROUND_VOXEL_CAPACITY] = {0};
+    uint8_t b[BACKGROUND_VOXEL_CAPACITY] = {0};
+    uint16_t weight[BACKGROUND_VOXEL_CAPACITY] = {0};
+    uint8_t count = 0;
   };
   void startBackgroundPcdWriter();
   void stopBackgroundPcdWriter();
@@ -170,7 +177,11 @@ public:
   bool background_pcd_started = false;
   size_t background_pcd_max_jobs = 4;
   double background_pcd_voxel_size = 0.20;
+  int background_pcd_max_points_per_voxel = 10;
   unsigned long long background_pcd_dropped_jobs = 0;
+
+  double viz_voxel_size = 0.25;
+  int viz_publish_interval = 3;
   std::unordered_map<VOXEL_LOCATION, BackgroundColorVoxel> background_color_voxels;
 
   std::thread watchdog_thread;
