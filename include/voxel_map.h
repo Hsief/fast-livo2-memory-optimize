@@ -14,8 +14,6 @@ which is included as part of this source code package.
 #define VOXEL_MAP_H_
 
 #include "common_lib.h"
-#include <algorithm>
-#include <cstddef>
 #include <Eigen/Dense>
 #include <fstream>
 #include <math.h>
@@ -51,11 +49,6 @@ typedef struct VoxelMapConfig
   double sliding_thresh;
   bool map_sliding_en;
   int half_map_size;
-
-  // Hard safety bound for embedded platforms. Spatial sliding is the primary
-  // policy; this cap is an emergency guard against outliers/teleports/growth.
-  int max_root_voxels;
-  int root_voxel_reserve;
 } VoxelMapConfig;
 
 typedef struct PointToPlane
@@ -210,8 +203,6 @@ public:
   float ave_build_residual_time = 0.0;
   float ave_ekf_time = 0.0;
   int scan_count = 0;
-  unsigned long long pruned_root_voxels_total = 0;
-  unsigned long long hardcap_root_voxels_total = 0;
   StatesGroup state_;
   V3D position_last_;
 
@@ -233,12 +224,7 @@ public:
     feats_undistort_.reset(new PointCloudXYZI());
     feats_down_body_.reset(new PointCloudXYZI());
     feats_down_world_.reset(new PointCloudXYZI());
-    if (config_setting_.root_voxel_reserve > 0)
-      voxel_map_.reserve(static_cast<size_t>(config_setting_.root_voxel_reserve));
-    voxel_map_.max_load_factor(0.70f);
   };
-
-  ~VoxelMapManager();
 
   void StateEstimation(StatesGroup &state_propagat);
   void TransformLidar(const Eigen::Matrix3d rot, const Eigen::Vector3d t, const PointCloudXYZI::Ptr &input_cloud,
@@ -257,7 +243,6 @@ public:
   void pubVoxelMap();
 
   void mapSliding();
-  void enforceRootVoxelLimit();
   void clearMemOutOfMap(const int& x_max,const int& x_min,const int& y_max,const int& y_min,const int& z_max,const int& z_min );
 
 private:
