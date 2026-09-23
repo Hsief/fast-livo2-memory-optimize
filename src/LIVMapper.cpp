@@ -202,6 +202,12 @@ void LIVMapper::initializeComponents()
 
 void LIVMapper::initializeFiles() 
 {
+  if (pcd_save_en && pcd_save_interval < 0)
+  {
+    ROS_WARN("pcd_save is enabled with interval=-1: FAST-LIVO2 will accumulate the whole map in RAM until shutdown. "
+             "This is unsafe on Xavier NX; use a positive interval for online runs.");
+  }
+
   if (pcd_save_en && colmap_output_en)
   {
       const std::string folderPath = std::string(ROOT_DIR) + "/scripts/colmap_output.sh";
@@ -210,13 +216,13 @@ void LIVMapper::initializeFiles()
       
       int chmodRet = system(chmodCommand.c_str());  
       if (chmodRet != 0) {
-          std::cerr << "Failed to set execute permissions for the script." << std::endl;
+          std::cerr << "Failed to set execute permissions for the script." << '\n';
           return;
       }
 
       int executionRet = system(folderPath.c_str());
       if (executionRet != 0) {
-          std::cerr << "Failed to execute the script." << std::endl;
+          std::cerr << "Failed to execute the script." << '\n';
           return;
       }
   }
@@ -263,7 +269,7 @@ void LIVMapper::handleFirstFrame()
     _first_lidar_time = LidarMeasures.last_lio_update_time;
     p_imu->first_lidar_time = _first_lidar_time; // Only for IMU data log
     is_first_frame = true;
-    cout << "FIRST LIDAR FRAME!" << endl;
+    cout << "FIRST LIDAR FRAME!" << '\n';
   }
 }
 
@@ -271,7 +277,7 @@ void LIVMapper::gravityAlignment()
 {
   if (!p_imu->imu_need_init && !gravity_align_finished) 
   {
-    std::cout << "Gravity Alignment Starts" << std::endl;
+    std::cout << "Gravity Alignment Starts" << '\n';
     V3D ez(0, 0, -1), gz(_state.gravity);
     Quaterniond G_q_I0 = Quaterniond::FromTwoVectors(gz, ez);
     M3D G_R_I0 = G_q_I0.toRotationMatrix();
@@ -281,7 +287,7 @@ void LIVMapper::gravityAlignment()
     _state.vel_end = G_R_I0 * _state.vel_end;
     _state.gravity = G_R_I0 * _state.gravity;
     gravity_align_finished = true;
-    std::cout << "Gravity Alignment Finished" << std::endl;
+    std::cout << "Gravity Alignment Finished" << '\n';
   }
 }
 
@@ -299,9 +305,9 @@ void LIVMapper::processImu()
 
   // double t_prop = omp_get_wtime();
 
-  // std::cout << "[ Mapping ] feats_undistort: " << feats_undistort->size() << std::endl;
-  // std::cout << "[ Mapping ] predict cov: " << _state.cov.diagonal().transpose() << std::endl;
-  // std::cout << "[ Mapping ] predict sta: " << state_propagat.pos_end.transpose() << state_propagat.vel_end.transpose() << std::endl;
+  // std::cout << "[ Mapping ] feats_undistort: " << feats_undistort->size() << '\n';
+  // std::cout << "[ Mapping ] predict cov: " << _state.cov.diagonal().transpose() << '\n';
+  // std::cout << "[ Mapping ] predict sta: " << state_propagat.pos_end.transpose() << state_propagat.vel_end.transpose() << '\n';
 }
 
 void LIVMapper::stateEstimationAndMapping() 
@@ -323,11 +329,11 @@ void LIVMapper::handleVIO()
   euler_cur = RotMtoEuler(_state.rot_end);
   fout_pre << std::setw(20) << LidarMeasures.last_lio_update_time - _first_lidar_time << " " << euler_cur.transpose() * 57.3 << " "
             << _state.pos_end.transpose() << " " << _state.vel_end.transpose() << " " << _state.bias_g.transpose() << " "
-            << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose() << std::endl;
+            << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose() << '\n';
     
   if (pcl_w_wait_pub->empty() || (pcl_w_wait_pub == nullptr)) 
   {
-    std::cout << "[ VIO ] No point!!!" << std::endl;
+    std::cout << "[ VIO ] No point!!!" << '\n';
     return;
   }
     
@@ -370,7 +376,7 @@ void LIVMapper::handleVIO()
   euler_cur = RotMtoEuler(_state.rot_end);
   fout_out << std::setw(20) << LidarMeasures.last_lio_update_time - _first_lidar_time << " " << euler_cur.transpose() * 57.3 << " "
             << _state.pos_end.transpose() << " " << _state.vel_end.transpose() << " " << _state.bias_g.transpose() << " "
-            << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose() << " " << feats_undistort->points.size() << std::endl;
+            << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose() << " " << feats_undistort->points.size() << '\n';
 }
 
 void LIVMapper::handleLIO() 
@@ -378,11 +384,11 @@ void LIVMapper::handleLIO()
   euler_cur = RotMtoEuler(_state.rot_end);
   fout_pre << setw(20) << LidarMeasures.last_lio_update_time - _first_lidar_time << " " << euler_cur.transpose() * 57.3 << " "
            << _state.pos_end.transpose() << " " << _state.vel_end.transpose() << " " << _state.bias_g.transpose() << " "
-           << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose() << endl;
+           << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose() << '\n';
            
   if (feats_undistort->empty() || (feats_undistort == nullptr)) 
   {
-    std::cout << "[ LIO ]: No point!!!" << std::endl;
+    std::cout << "[ LIO ]: No point!!!" << '\n';
     return;
   }
 
@@ -441,7 +447,7 @@ void LIVMapper::handleLIO()
     Eigen::Quaterniond q(_state.rot_end);
     evoFile << std::fixed;
     evoFile << LidarMeasures.last_lio_update_time << " " << _state.pos_end[0] << " " << _state.pos_end[1] << " " << _state.pos_end[2] << " "
-            << q.x() << " " << q.y() << " " << q.z() << " " << q.w() << std::endl;
+            << q.x() << " " << q.y() << " " << q.z() << " " << q.w() << '\n';
   }
   
   euler_cur = RotMtoEuler(_state.rot_end);
@@ -501,23 +507,14 @@ void LIVMapper::handleLIO()
   // printf("\033[1;36m[ LIO mapping time ]: current scan: icp: %0.6f secs, map incre: %0.6f secs, total: %0.6f secs.\033[0m\n"
   //         "\033[1;36m[ LIO mapping time ]: average: icp: %0.6f secs, map incre: %0.6f secs, total: %0.6f secs.\033[0m\n",
   //         t2 - t1, t4 - t3, t4 - t0, aver_time_icp, aver_time_map_inre, aver_time_consu);
-  printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
-  printf("\033[1;34m|                         LIO Mapping Time                    |\033[0m\n");
-  printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
-  printf("\033[1;34m| %-29s | %-27s |\033[0m\n", "Algorithm Stage", "Time (secs)");
-  printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "DownSample", t_down - t0);
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "ICP", t2 - t1);
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "updateVoxelMap", t4 - t3);
-  printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "Current Total Time", t4 - t0);
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "Average Total Time", aver_time_consu);
-  printf("\033[1;34m+-------------------------------------------------------------+\033[0m\n");
+  ROS_INFO_THROTTLE(1.0,
+                    "[NX_LIO] down=%.4f s icp=%.4f s map=%.4f s total=%.4f s avg=%.4f s",
+                    t_down - t0, t2 - t1, t4 - t3, t4 - t0, aver_time_consu);
 
   euler_cur = RotMtoEuler(_state.rot_end);
   fout_out << std::setw(20) << LidarMeasures.last_lio_update_time - _first_lidar_time << " " << euler_cur.transpose() * 57.3 << " "
             << _state.pos_end.transpose() << " " << _state.vel_end.transpose() << " " << _state.bias_g.transpose() << " "
-            << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose() << " " << feats_undistort->points.size() << std::endl;
+            << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose() << " " << feats_undistort->points.size() << '\n';
 }
 
 void LIVMapper::savePCD() 
@@ -538,11 +535,11 @@ void LIVMapper::savePCD()
   
       pcd_writer.writeBinary(raw_points_dir, *pcl_wait_save); // Save the raw point cloud data
       std::cout << GREEN << "Raw point cloud data saved to: " << raw_points_dir 
-                << " with point count: " << pcl_wait_save->points.size() << RESET << std::endl;
+                << " with point count: " << pcl_wait_save->points.size() << RESET << '\n';
       
       pcd_writer.writeBinary(downsampled_points_dir, *downsampled_cloud); // Save the downsampled point cloud data
       std::cout << GREEN << "Downsampled point cloud data saved to: " << downsampled_points_dir 
-                << " with point count after filtering: " << downsampled_cloud->points.size() << RESET << std::endl;
+                << " with point count after filtering: " << downsampled_cloud->points.size() << RESET << '\n';
 
       if(colmap_output_en)
       {
@@ -557,7 +554,7 @@ void LIVMapper::savePCD()
                         << static_cast<int>(point.r) << " "
                         << static_cast<int>(point.g) << " "
                         << static_cast<int>(point.b) << " "
-                        << 0 << std::endl;
+                        << 0 << '\n';
         }
       }
     }
@@ -565,7 +562,7 @@ void LIVMapper::savePCD()
     {      
       pcd_writer.writeBinary(raw_points_dir, *pcl_wait_save_intensity);
       std::cout << GREEN << "Raw point cloud data saved to: " << raw_points_dir 
-                << " with point count: " << pcl_wait_save_intensity->points.size() << RESET << std::endl;
+                << " with point count: " << pcl_wait_save_intensity->points.size() << RESET << '\n';
     }
   }
 }
@@ -664,7 +661,7 @@ void LIVMapper::imu_prop_callback(const ros::TimerEvent &e)
       {
         double t_from_lidar_end_time = prop_imu_buffer[i].header.stamp.toSec() - latest_ekf_time;
         double dt = t_from_lidar_end_time - last_t_from_lidar_end_time;
-        // cout << "prop dt" << dt << ", " << t_from_lidar_end_time << ", " << last_t_from_lidar_end_time << endl;
+        // cout << "prop dt" << dt << ", " << t_from_lidar_end_time << ", " << last_t_from_lidar_end_time << '\n';
         V3D acc_imu(prop_imu_buffer[i].linear_acceleration.x, prop_imu_buffer[i].linear_acceleration.y, prop_imu_buffer[i].linear_acceleration.z);
         V3D omg_imu(prop_imu_buffer[i].angular_velocity.x, prop_imu_buffer[i].angular_velocity.y, prop_imu_buffer[i].angular_velocity.z);
         prop_imu_once(imu_propagate, dt, acc_imu, omg_imu);
@@ -1354,7 +1351,7 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
           }
           *pcl_wait_save_intensity += *laserCloudBody;
           scan_wait_num++;
-          cout << "save body frame points: " << pcl_wait_save_intensity->points.size() << endl;
+          cout << "save body frame points: " << pcl_wait_save_intensity->points.size() << '\n';
         }
         pcd_save_interval = 1;
         
@@ -1371,7 +1368,7 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
 
       pcl::PCDWriter pcd_writer;
 
-      cout << "current scan saved to " << all_points_dir << endl;
+      cout << "current scan saved to " << all_points_dir << '\n';
       if (pcl_wait_save->points.size() > 0)
       {
         pcd_writer.writeBinary(all_points_dir, *pcl_wait_save); // pcl::io::savePCDFileASCII(all_points_dir, *pcl_wait_save);
@@ -1390,7 +1387,7 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
       Eigen::Quaterniond q(_state.rot_end);
       fout_lidar_pos << std::fixed << std::setprecision(6);
       fout_lidar_pos <<  LidarMeasures.measures.back().lio_time << " " << _state.pos_end[0] << " " << _state.pos_end[1] << " " << _state.pos_end[2] << " " << q.x() << " " << q.y() << " " << q.z()
-          << " " << q.w() << " " << endl;
+          << " " << q.w() << " " << '\n';
     }
   }
   if (img_save_en && LidarMeasures.lio_vio_flg == VIO)
@@ -1405,7 +1402,7 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
       Eigen::Quaterniond q(_state.rot_end);
       fout_visual_pos << std::fixed << std::setprecision(6);
       fout_visual_pos << LidarMeasures.measures.back().vio_time << " " << _state.pos_end[0] << " " << _state.pos_end[1] << " " << _state.pos_end[2] << " "
-            << q.x() << " " << q.y() << " " << q.z() << " " << q.w() << std::endl;
+            << q.x() << " " << q.y() << " " << q.z() << " " << q.w() << '\n';
       img_wait_num = 0;
     }
   }
