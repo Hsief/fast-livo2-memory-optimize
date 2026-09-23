@@ -15,6 +15,7 @@ which is included as part of this source code package.
 
 #include "common_lib.h"
 #include <algorithm>
+#include <cstddef>
 #include <Eigen/Dense>
 #include <fstream>
 #include <math.h>
