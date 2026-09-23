@@ -74,10 +74,12 @@ uav:
 
 publish:
   dense_map_en: true
-  pub_effect_point_en: false 
+  pub_effect_point_en: false
   pub_plane_en: false
   pub_scan_num: 1
   blind_rgb_points: 0.0
+  viz_voxel_size: 0.25 # RViz-only display voxel; does not affect LIO/VIO/map estimation
+  viz_publish_interval: 3 # publish one display cloud every 3 available visual clouds
 
 evo:
   seq_name: "CBD_Building_01"
@@ -87,7 +89,8 @@ pcd_save:
   pcd_save_en: true
   type: 0 # colored world-frame background map (XYZRGB), output-only
   colmap_output_en: false # colored PCD does not require per-frame COLMAP image export
-  filter_size_pcd: 0.20 # export-only voxel size; estimator precision is unchanged
+  filter_size_pcd: 0.20 # final colored background voxel size; estimator precision is unchanged
+  max_points_per_voxel: 10 # final/chunk map keeps at most 10 XYZRGB points per voxel
   interval: 50 # hand off one colored background chunk every 50 LiDAR frames
   # how many LiDAR frames saved in each pcd file;
   # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
