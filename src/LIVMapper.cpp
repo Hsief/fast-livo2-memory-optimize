@@ -219,13 +219,13 @@ void LIVMapper::initializeSubscribersAndPublishers(ros::NodeHandle &nh, image_tr
   sub_imu = nh.subscribe(imu_topic, 200000, &LIVMapper::imu_cbk, this);
   sub_img = nh.subscribe(img_topic, 200000, &LIVMapper::img_cbk, this);
   
-  pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/cloud_registered", 100);
-  pubNormal = nh.advertise<visualization_msgs::MarkerArray>("/fast_livo2/visualization_marker", 100);
-  pubSubVisualMap = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/cloud_visual_sub_map_before", 100);
-  pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/cloud_effected", 100);
-  pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/Laser_map", 100);
-  pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>("/fast_livo2/aft_mapped_to_init", 10);
-  pubPath = nh.advertise<nav_msgs::Path>("/fast_livo2/path", 10);
+  pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/cloud_registered", 1);
+  pubNormal = nh.advertise<visualization_msgs::MarkerArray>("/fast_livo2/visualization_marker", 1);
+  pubSubVisualMap = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/cloud_visual_sub_map_before", 1);
+  pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/cloud_effected", 1);
+  pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/Laser_map", 1);
+  pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>("/fast_livo2/aft_mapped_to_init", 5);
+  pubPath = nh.advertise<nav_msgs::Path>("/fast_livo2/path", 1);
   plane_pub = nh.advertise<visualization_msgs::Marker>("/fast_livo2/planner_normal", 1);
   voxel_pub = nh.advertise<visualization_msgs::MarkerArray>("/fast_livo2/voxels", 1);
   pubLaserCloudDyn = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/dyn_obj", 100);
@@ -1309,6 +1309,7 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
 
 void LIVMapper::publish_img_rgb(const image_transport::Publisher &pubImage, VIOManagerPtr vio_manager)
 {
+  if (pubImage.getNumSubscribers() == 0) return;
   cv::Mat img_rgb = vio_manager->img_cp;
   cv_bridge::CvImage out_msg;
   out_msg.header.stamp = ros::Time::now();
@@ -1364,18 +1365,21 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
   }
 
   /*** Publish Frame ***/
-  sensor_msgs::PointCloud2 laserCloudmsg;
-  if (slam_mode_ == LIVO && LidarMeasures.lio_vio_flg == VIO)
+  if (pubLaserCloudFullRes.getNumSubscribers() > 0)
   {
-    pcl::toROSMsg(*laserCloudWorldRGB, laserCloudmsg);
+    sensor_msgs::PointCloud2 laserCloudmsg;
+    if (slam_mode_ == LIVO && LidarMeasures.lio_vio_flg == VIO)
+    {
+      pcl::toROSMsg(*laserCloudWorldRGB, laserCloudmsg);
+    }
+    if (slam_mode_ == ONLY_LIO || slam_mode_ == ONLY_LO)
+    {
+      pcl::toROSMsg(*pcl_w_wait_pub, laserCloudmsg);
+    }
+    laserCloudmsg.header.stamp = ros::Time::now();
+    laserCloudmsg.header.frame_id = "camera_init";
+    pubLaserCloudFullRes.publish(laserCloudmsg);
   }
-  if (slam_mode_ == ONLY_LIO || slam_mode_ == ONLY_LO)
-  { 
-    pcl::toROSMsg(*pcl_w_wait_pub, laserCloudmsg); 
-  }
-  laserCloudmsg.header.stamp = ros::Time::now(); //.fromSec(last_timestamp_lidar);
-  laserCloudmsg.header.frame_id = "camera_init";
-  pubLaserCloudFullRes.publish(laserCloudmsg);
 
   /**************** save map ****************/
   /* 1. make sure you have enough memories
