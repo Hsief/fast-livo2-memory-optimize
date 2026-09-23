@@ -37,6 +37,7 @@ public:
   void handleLIO();
   void savePCD();
   void processImu();
+  void printRuntimeDiagnostics();
   
   bool sync_packages(LidarMeasureGroup &meas);
   void prop_imu_once(StatesGroup &imu_prop_state, const double dt, V3D acc_avr, V3D angvel_avr);
@@ -87,6 +88,22 @@ public:
   bool lidar_map_inited = false, pcd_save_en = false, img_save_en = false, pub_effect_point_en = false, pose_output_en = false, ros_driver_fix_en = false, hilti_en = false;
   int img_save_interval = 1, pcd_save_interval = -1, pcd_save_type = 0;
   int pub_scan_num = 1;
+
+  // Jetson/Xavier bounded-runtime controls. Real-time SLAM must never allow
+  // ROS queues, internal sensor buffers, or RViz path history to grow forever.
+  int lidar_sub_queue_size = 4;
+  int imu_sub_queue_size = 800;
+  int image_sub_queue_size = 3;
+  size_t max_lidar_buffer_size = 4;
+  size_t max_image_buffer_size = 3;
+  size_t max_imu_buffer_size = 1600;
+  size_t max_prop_imu_buffer_size = 1600;
+  size_t path_max_poses = 1500;
+  int path_pub_interval = 5;
+  double diagnostics_interval_sec = 1.0;
+  unsigned long long dropped_lidar_frames = 0;
+  unsigned long long dropped_image_frames = 0;
+  unsigned long long dropped_imu_messages = 0;
 
   StatesGroup imu_propagate, latest_ekf_state;
 
