@@ -352,12 +352,13 @@ void LIVMapper::initializeFiles()
 
 void LIVMapper::initializeSubscribersAndPublishers(ros::NodeHandle &nh, image_transport::ImageTransport &it) 
 {
-  const ros::TransportHints tcp_no_delay = ros::TransportHints().tcpNoDelay();
+  // Keep the original FAST-LIVO2 sensor subscription semantics. Independent
+  // per-sensor dropping changes LIVO time slicing and can cause odometry drift.
   sub_pcl = p_pre->lidar_type == AVIA ? 
-            nh.subscribe(lid_topic, lidar_sub_queue_size, &LIVMapper::livox_pcl_cbk, this, tcp_no_delay): 
-            nh.subscribe(lid_topic, lidar_sub_queue_size, &LIVMapper::standard_pcl_cbk, this, tcp_no_delay);
-  sub_imu = nh.subscribe(imu_topic, imu_sub_queue_size, &LIVMapper::imu_cbk, this, tcp_no_delay);
-  sub_img = nh.subscribe(img_topic, image_sub_queue_size, &LIVMapper::img_cbk, this);
+            nh.subscribe(lid_topic, 200000, &LIVMapper::livox_pcl_cbk, this): 
+            nh.subscribe(lid_topic, 200000, &LIVMapper::standard_pcl_cbk, this);
+  sub_imu = nh.subscribe(imu_topic, 200000, &LIVMapper::imu_cbk, this);
+  sub_img = nh.subscribe(img_topic, 200000, &LIVMapper::img_cbk, this);
   
   // Large visualization messages must never queue up on a 6 GB Jetson.
   pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/cloud_registered", 1);
