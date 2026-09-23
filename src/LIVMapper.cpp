@@ -14,6 +14,9 @@ which is included as part of this source code package.
 #include <sys/stat.h>
 #include <sys/resource.h>
 #include <ros/callback_queue.h>
+#include <ctime>
+#include <fstream>
+#include <sstream>
 
 LIVMapper::LIVMapper(ros::NodeHandle &nh)
     : extT(0, 0, 0),
@@ -44,6 +47,7 @@ LIVMapper::LIVMapper(ros::NodeHandle &nh)
   root_dir = ROOT_DIR;
   initializeFiles();
   initializeComponents();
+  startWatchdog();
   if (pcd_save_en) startBackgroundPcdWriter();
   path.header.stamp = ros::Time::now();
   path.header.frame_id = "camera_init";
@@ -51,6 +55,7 @@ LIVMapper::LIVMapper(ros::NodeHandle &nh)
 
 LIVMapper::~LIVMapper()
 {
+  stopWatchdog();
   stopBackgroundPcdWriter();
 }
 
@@ -183,8 +188,10 @@ void LIVMapper::initializeFiles()
 {
   const std::string log_dir = std::string(ROOT_DIR) + "Log";
   const std::string pcd_dir = log_dir + "/pcd";
+  const std::string runtime_dir = log_dir + "/runtime";
   ::mkdir(log_dir.c_str(), 0755);
   ::mkdir(pcd_dir.c_str(), 0755);
+  ::mkdir(runtime_dir.c_str(), 0755);
 
   if (pcd_save_en && colmap_output_en)
   {
@@ -492,6 +499,114 @@ void LIVMapper::handleLIO()
   fout_out << std::setw(20) << LidarMeasures.last_lio_update_time - _first_lidar_time << " " << euler_cur.transpose() * 57.3 << " "
             << _state.pos_end.transpose() << " " << _state.vel_end.transpose() << " " << _state.bias_g.transpose() << " "
             << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose() << " " << feats_undistort->points.size() << std::endl;
+}
+
+void LIVMapper::startWatchdog()
+{
+  if (watchdog_thread.joinable()) return;
+  watchdog_stop.store(false);
+  watchdog_thread = std::thread(&LIVMapper::watchdogLoop, this);
+}
+
+void LIVMapper::stopWatchdog()
+{
+  watchdog_stop.store(true);
+  if (watchdog_thread.joinable()) watchdog_thread.join();
+}
+
+void LIVMapper::watchdogLoop()
+{
+  ::setpriority(PRIO_PROCESS, 0, 15);
+
+  std::time_t now = std::time(nullptr);
+  std::tm tm_now;
+  localtime_r(&now, &tm_now);
+  char stamp[32];
+  std::strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", &tm_now);
+
+  const std::string path =
+      std::string(ROOT_DIR) + "Log/runtime/watchdog_" + stamp + ".csv";
+  std::ofstream out(path, std::ios::out);
+  if (!out.is_open())
+  {
+    ROS_ERROR("[WATCHDOG] cannot open %s", path.c_str());
+    return;
+  }
+
+  out << "wall_s,phase,callbacks_last_cycle,estimator_cycles,"
+      << "buffer_lock_ok,lidar_buf,img_buf,imu_buf,"
+      << "bg_lock_ok,bg_jobs,rss_kb,vmswap_kb,mem_available_kb\n";
+  out.flush();
+  ROS_INFO("[WATCHDOG] runtime log: %s", path.c_str());
+
+  auto read_status_kb = [](const std::string &key) -> long
+  {
+    std::ifstream in("/proc/self/status");
+    std::string line;
+    while (std::getline(in, line))
+    {
+      if (line.compare(0, key.size(), key) == 0)
+      {
+        std::istringstream iss(line.substr(key.size()));
+        long value = -1;
+        iss >> value;
+        return value;
+      }
+    }
+    return -1;
+  };
+
+  auto read_mem_available_kb = []() -> long
+  {
+    std::ifstream in("/proc/meminfo");
+    std::string key;
+    long value;
+    std::string unit;
+    while (in >> key >> value >> unit)
+    {
+      if (key == "MemAvailable:") return value;
+    }
+    return -1;
+  };
+
+  const double t0 = omp_get_wtime();
+  while (!watchdog_stop.load())
+  {
+    size_t lidar_buf = 0, img_buf = 0, imu_buf = 0;
+    int buffer_lock_ok = 0;
+    if (mtx_buffer.try_lock())
+    {
+      buffer_lock_ok = 1;
+      lidar_buf = lid_raw_data_buffer.size();
+      img_buf = img_buffer.size();
+      imu_buf = imu_buffer.size();
+      mtx_buffer.unlock();
+    }
+
+    size_t bg_jobs = 0;
+    int bg_lock_ok = 0;
+    if (background_pcd_mutex.try_lock())
+    {
+      bg_lock_ok = 1;
+      bg_jobs = background_pcd_jobs.size();
+      background_pcd_mutex.unlock();
+    }
+
+    out << std::fixed << std::setprecision(3)
+        << (omp_get_wtime() - t0) << ','
+        << watchdog_phase.load() << ','
+        << watchdog_callbacks_last_cycle.load() << ','
+        << watchdog_estimator_cycles.load() << ','
+        << buffer_lock_ok << ','
+        << lidar_buf << ',' << img_buf << ',' << imu_buf << ','
+        << bg_lock_ok << ',' << bg_jobs << ','
+        << read_status_kb("VmRSS:") << ','
+        << read_status_kb("VmSwap:") << ','
+        << read_mem_available_kb() << '\n';
+    out.flush();
+
+    usleep(1000000);
+  }
 }
 
 void LIVMapper::startBackgroundPcdWriter()
