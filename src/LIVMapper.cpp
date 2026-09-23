@@ -657,6 +657,54 @@ void LIVMapper::backgroundPcdWriterLoop()
   // On Linux nice is per-thread, so this only lowers the PCD worker priority.
   ::setpriority(PRIO_PROCESS, 0, 10);
 
+  const float merge_distance =
+      static_cast<float>(std::max(0.01, background_pcd_voxel_size * 0.15));
+  const float merge_distance_sq = merge_distance * merge_distance;
+
+  auto insert_colored_point = [&](BackgroundColorVoxel &v, const pcl::PointXYZRGB &p)
+  {
+    int nearest = -1;
+    float nearest_d2 = std::numeric_limits<float>::max();
+    for (int i = 0; i < static_cast<int>(v.count); ++i)
+    {
+      const float dx = v.x[i] - p.x;
+      const float dy = v.y[i] - p.y;
+      const float dz = v.z[i] - p.z;
+      const float d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < nearest_d2)
+      {
+        nearest_d2 = d2;
+        nearest = i;
+      }
+    }
+
+    if (nearest >= 0 && nearest_d2 <= merge_distance_sq)
+    {
+      const uint32_t w = std::max<uint32_t>(1, v.weight[nearest]);
+      const uint32_t denom = w + 1;
+      v.x[nearest] = (v.x[nearest] * w + p.x) / denom;
+      v.y[nearest] = (v.y[nearest] * w + p.y) / denom;
+      v.z[nearest] = (v.z[nearest] * w + p.z) / denom;
+      v.r[nearest] = static_cast<uint8_t>((static_cast<uint32_t>(v.r[nearest]) * w + p.r) / denom);
+      v.g[nearest] = static_cast<uint8_t>((static_cast<uint32_t>(v.g[nearest]) * w + p.g) / denom);
+      v.b[nearest] = static_cast<uint8_t>((static_cast<uint32_t>(v.b[nearest]) * w + p.b) / denom);
+      if (v.weight[nearest] < std::numeric_limits<uint16_t>::max()) ++v.weight[nearest];
+      return;
+    }
+
+    if (v.count < background_pcd_max_points_per_voxel)
+    {
+      const int i = v.count++;
+      v.x[i] = p.x;
+      v.y[i] = p.y;
+      v.z[i] = p.z;
+      v.r[i] = p.r;
+      v.g[i] = p.g;
+      v.b[i] = p.b;
+      v.weight[i] = 1;
+    }
+  };
+
   while (true)
   {
     BackgroundPcdJob job;
@@ -682,34 +730,49 @@ void LIVMapper::backgroundPcdWriterLoop()
 
       if (job.rgb && !job.rgb->empty())
       {
-        PointCloudXYZRGB::Ptr filtered(new PointCloudXYZRGB());
-        pcl::VoxelGrid<pcl::PointXYZRGB> voxel_filter;
-        voxel_filter.setInputCloud(job.rgb);
-        voxel_filter.setLeafSize(background_pcd_voxel_size,
-                                 background_pcd_voxel_size,
-                                 background_pcd_voxel_size);
-        voxel_filter.filter(*filtered);
-        for (const auto &p : filtered->points)
+        std::unordered_map<VOXEL_LOCATION, BackgroundColorVoxel> chunk_voxels;
+        chunk_voxels.reserve(std::max<size_t>(1024, job.rgb->size() / 16));
+
+        for (const auto &p : job.rgb->points)
         {
           const int64_t vx = static_cast<int64_t>(std::floor(p.x / background_pcd_voxel_size));
           const int64_t vy = static_cast<int64_t>(std::floor(p.y / background_pcd_voxel_size));
           const int64_t vz = static_cast<int64_t>(std::floor(p.z / background_pcd_voxel_size));
-          BackgroundColorVoxel &v = background_color_voxels[VOXEL_LOCATION(vx, vy, vz)];
-          v.sx += p.x;
-          v.sy += p.y;
-          v.sz += p.z;
-          v.sr += p.r;
-          v.sg += p.g;
-          v.sb += p.b;
-          ++v.count;
+          const VOXEL_LOCATION key(vx, vy, vz);
+
+          insert_colored_point(chunk_voxels[key], p);
+          insert_colored_point(background_color_voxels[key], p);
         }
+
+        PointCloudXYZRGB::Ptr filtered(new PointCloudXYZRGB());
+        filtered->points.reserve(chunk_voxels.size() *
+                                 static_cast<size_t>(background_pcd_max_points_per_voxel));
+        for (const auto &kv : chunk_voxels)
+        {
+          const BackgroundColorVoxel &v = kv.second;
+          for (int i = 0; i < static_cast<int>(v.count); ++i)
+          {
+            pcl::PointXYZRGB p;
+            p.x = v.x[i];
+            p.y = v.y[i];
+            p.z = v.z[i];
+            p.r = v.r[i];
+            p.g = v.g[i];
+            p.b = v.b[i];
+            filtered->points.push_back(p);
+          }
+        }
+        filtered->width = static_cast<uint32_t>(filtered->points.size());
+        filtered->height = 1;
+        filtered->is_dense = true;
 
         // Checkpoint write is best-effort. The final in-memory colored voxel
         // map is already updated, so a disk error cannot punch a hole in it.
         writer.writeBinaryCompressed(job.path, *filtered);
-        ROS_INFO("[BG_PCD] saved compressed RGB chunk: raw=%zu filtered=%zu global_voxels=%zu voxel=%.2fm file=%s",
-                 job.rgb->size(), filtered->size(), background_color_voxels.size(),
-                 background_pcd_voxel_size, job.path.c_str());
+        ROS_INFO("[BG_PCD] saved voxel RGB chunk: raw=%zu kept=%zu voxels=%zu global_voxels=%zu voxel=%.2fm max_pts=%d file=%s",
+                 job.rgb->size(), filtered->size(), chunk_voxels.size(),
+                 background_color_voxels.size(), background_pcd_voxel_size,
+                 background_pcd_max_points_per_voxel, job.path.c_str());
       }
       else if (job.intensity && !job.intensity->empty())
       {
@@ -753,22 +816,23 @@ void LIVMapper::backgroundPcdWriterLoop()
     try
     {
       PointCloudXYZRGB::Ptr final_map(new PointCloudXYZRGB());
-      final_map->points.reserve(background_color_voxels.size());
+      final_map->points.reserve(background_color_voxels.size() *
+                                static_cast<size_t>(background_pcd_max_points_per_voxel));
 
       for (const auto &kv : background_color_voxels)
       {
         const BackgroundColorVoxel &v = kv.second;
-        if (v.count == 0) continue;
-
-        pcl::PointXYZRGB p;
-        const double inv = 1.0 / static_cast<double>(v.count);
-        p.x = static_cast<float>(v.sx * inv);
-        p.y = static_cast<float>(v.sy * inv);
-        p.z = static_cast<float>(v.sz * inv);
-        p.r = static_cast<uint8_t>(v.sr / v.count);
-        p.g = static_cast<uint8_t>(v.sg / v.count);
-        p.b = static_cast<uint8_t>(v.sb / v.count);
-        final_map->points.push_back(p);
+        for (int i = 0; i < static_cast<int>(v.count); ++i)
+        {
+          pcl::PointXYZRGB p;
+          p.x = v.x[i];
+          p.y = v.y[i];
+          p.z = v.z[i];
+          p.r = v.r[i];
+          p.g = v.g[i];
+          p.b = v.b[i];
+          final_map->points.push_back(p);
+        }
       }
 
       final_map->width = static_cast<uint32_t>(final_map->points.size());
@@ -778,8 +842,10 @@ void LIVMapper::backgroundPcdWriterLoop()
       const std::string final_path = std::string(ROOT_DIR) + "Log/pcd/background_map.pcd";
       pcl::PCDWriter writer;
       writer.writeBinaryCompressed(final_path, *final_map);
-      ROS_INFO("[BG_PCD] final colored background map saved: points=%zu voxel=%.2fm file=%s",
-               final_map->size(), background_pcd_voxel_size, final_path.c_str());
+      ROS_INFO("[BG_PCD] final colored voxel map saved: points=%zu voxels=%zu voxel=%.2fm max_pts=%d file=%s",
+               final_map->size(), background_color_voxels.size(),
+               background_pcd_voxel_size, background_pcd_max_points_per_voxel,
+               final_path.c_str());
     }
     catch (const std::exception &e)
     {
