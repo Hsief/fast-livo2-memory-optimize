@@ -44,6 +44,14 @@ vio:
   inverse_composition_en: false
   exposure_estimate_en: true
   inv_expo_cov: 0.1
+  # Bounded sparse visual map: prevents historical reference images from
+  # keeping RAM alive indefinitely during long runs.
+  visual_map_voxel_size: 0.5
+  visual_map_half_size: 50
+  visual_map_max_voxels: 40000
+  visual_map_max_points_per_voxel: 8
+  visual_map_max_ref_age_frames: 200
+  visual_map_prune_interval: 10
 
 imu:
   imu_en: true
