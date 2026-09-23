@@ -11,6 +11,7 @@ which is included as part of this source code package.
 */
 
 #include "LIVMapper.h"
+#include <sys/stat.h>
 
 LIVMapper::LIVMapper(ros::NodeHandle &nh)
     : extT(0, 0, 0),
@@ -41,11 +42,15 @@ LIVMapper::LIVMapper(ros::NodeHandle &nh)
   root_dir = ROOT_DIR;
   initializeFiles();
   initializeComponents();
+  if (pcd_save_en) startBackgroundPcdWriter();
   path.header.stamp = ros::Time::now();
   path.header.frame_id = "camera_init";
 }
 
-LIVMapper::~LIVMapper() {}
+LIVMapper::~LIVMapper()
+{
+  stopBackgroundPcdWriter();
+}
 
 void LIVMapper::readParameters(ros::NodeHandle &nh)
 {
@@ -101,6 +106,16 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
 
   nh.param<bool>("pcd_save/colmap_output_en", colmap_output_en, false);
   nh.param<double>("pcd_save/filter_size_pcd", filter_size_pcd, 0.5);
+  int background_queue_jobs_cfg = static_cast<int>(background_pcd_max_jobs);
+  nh.param<int>("pcd_save/background_queue_jobs", background_queue_jobs_cfg, 4);
+  background_pcd_max_jobs = static_cast<size_t>(std::max(1, background_queue_jobs_cfg));
+  background_pcd_voxel_size = std::max(0.20, filter_size_pcd);
+  if (pcd_save_en && pcd_save_interval < 0)
+  {
+    ROS_WARN("Background PCD export: interval=-1 changed to 50-frame chunks. "
+             "This only changes map export; estimator inputs and states are untouched.");
+    pcd_save_interval = 50;
+  }
   nh.param<vector<double>>("extrin_calib/extrinsic_T", extrinT, vector<double>());
   nh.param<vector<double>>("extrin_calib/extrinsic_R", extrinR, vector<double>());
   nh.param<vector<double>>("extrin_calib/Pcl", cameraextrinT, vector<double>());
@@ -164,6 +179,11 @@ void LIVMapper::initializeComponents()
 
 void LIVMapper::initializeFiles() 
 {
+  const std::string log_dir = std::string(ROOT_DIR) + "Log";
+  const std::string pcd_dir = log_dir + "/pcd";
+  ::mkdir(log_dir.c_str(), 0755);
+  ::mkdir(pcd_dir.c_str(), 0755);
+
   if (pcd_save_en && colmap_output_en)
   {
       const std::string folderPath = std::string(ROOT_DIR) + "/scripts/colmap_output.sh";
