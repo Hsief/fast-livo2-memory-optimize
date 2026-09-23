@@ -819,19 +819,25 @@ void LIVMapper::imu_prop_callback(const ros::TimerEvent &e)
 
 void LIVMapper::transformLidar(const Eigen::Matrix3d rot, const Eigen::Vector3d t, const PointCloudXYZI::Ptr &input_cloud, PointCloudXYZI::Ptr &trans_cloud)
 {
-  PointCloudXYZI().swap(*trans_cloud);
-  trans_cloud->reserve(input_cloud->size());
-  for (size_t i = 0; i < input_cloud->size(); i++)
+  const size_t n = input_cloud->size();
+  trans_cloud->points.resize(n);
+  trans_cloud->width = static_cast<uint32_t>(n);
+  trans_cloud->height = 1;
+  trans_cloud->is_dense = input_cloud->is_dense;
+#ifdef MP_EN
+  omp_set_num_threads(MP_PROC_NUM);
+#pragma omp parallel for
+#endif
+  for (int i = 0; i < static_cast<int>(n); ++i)
   {
-    pcl::PointXYZINormal p_c = input_cloud->points[i];
+    const pcl::PointXYZINormal &p_c = input_cloud->points[i];
     Eigen::Vector3d p(p_c.x, p_c.y, p_c.z);
-    p = (rot * (extR * p + extT) + t);
-    PointType pi;
+    p = rot * (extR * p + extT) + t;
+    PointType &pi = trans_cloud->points[i];
     pi.x = p(0);
     pi.y = p(1);
     pi.z = p(2);
     pi.intensity = p_c.intensity;
-    trans_cloud->points.push_back(pi);
   }
 }
 
