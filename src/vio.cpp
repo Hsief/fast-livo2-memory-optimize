@@ -400,6 +400,9 @@ void VIOManager::pruneVisualMap()
     }
   }
 
+  pruned_visual_voxels_total += removed_voxels;
+  pruned_visual_points_total += removed_points;
+
   if (removed_points > 0 || removed_voxels > 0)
   {
     // warp_map is keyed by Feature id; after point deletion cached entries may be
@@ -1999,8 +2002,15 @@ void VIOManager::processFrame(cv::Mat &img, vector<pointWithVar> &pg, const unor
   
   if(colmap_output_en)  dumpDataForColmap();
 
+  last_retrieve_time = t2 - t1;
+  last_ekf_stage_time = t3 - t2;
+  last_generate_time = t4 - t3;
+  last_update_map_time = t6 - t5;
+  last_reference_time = t7 - t6;
+  last_total_time = t7 - t1 - (t5 - t4);
+
   frame_count++;
-  ave_total = ave_total * (frame_count - 1) / frame_count + (t7 - t1 - (t5 - t4)) / frame_count;
+  ave_total = ave_total * (frame_count - 1) / frame_count + last_total_time / frame_count;
 
   // printf("[ VIO ] feat_map.size(): %zu\n", feat_map.size());
   // printf("\033[1;32m[ VIO time ]: current frame: retrieveFromVisualSparseMap time: %.6lf secs.\033[0m\n", t2 - t1);
@@ -2020,8 +2030,9 @@ void VIOManager::processFrame(cv::Mat &img, vector<pointWithVar> &pg, const unor
                     "[NX_VIO] voxels=%zu points=%zu retrieve=%.4f s ekf=%.4f s gen=%.4f s "
                     "update=%.4f s ref=%.4f s total=%.4f s avg=%.4f s",
                     feat_map.size(), visualMapPointCount(),
-                    t2 - t1, t3 - t2, t4 - t3, t6 - t5, t7 - t6,
-                    t7 - t1 - (t5 - t4), ave_total);
+                    last_retrieve_time, last_ekf_stage_time, last_generate_time,
+                    last_update_map_time, last_reference_time,
+                    last_total_time, ave_total);
 
   // std::string text = std::to_string(int(1 / (t7 - t1 - (t5 - t4)))) + " HZ";
   // cv::Point2f origin;
