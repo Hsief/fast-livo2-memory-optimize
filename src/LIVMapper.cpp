@@ -118,6 +118,9 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<int>("pcd_save/background_queue_jobs", background_queue_jobs_cfg, 4);
   background_pcd_max_jobs = static_cast<size_t>(std::max(1, background_queue_jobs_cfg));
   background_pcd_voxel_size = std::max(0.20, filter_size_pcd);
+  nh.param<int>("pcd_save/max_points_per_voxel", background_pcd_max_points_per_voxel, 10);
+  background_pcd_max_points_per_voxel =
+      std::max(1, std::min(BACKGROUND_VOXEL_CAPACITY, background_pcd_max_points_per_voxel));
   if (pcd_save_en && pcd_save_interval < 0)
   {
     ROS_WARN("Background PCD export: interval=-1 changed to 50-frame chunks. "
@@ -135,6 +138,10 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<int>("publish/pub_scan_num", pub_scan_num, 1);
   nh.param<bool>("publish/pub_effect_point_en", pub_effect_point_en, false);
   nh.param<bool>("publish/dense_map_en", dense_map_en, false);
+  nh.param<double>("publish/viz_voxel_size", viz_voxel_size, 0.25);
+  nh.param<int>("publish/viz_publish_interval", viz_publish_interval, 3);
+  viz_voxel_size = std::max(0.05, viz_voxel_size);
+  viz_publish_interval = std::max(1, viz_publish_interval);
 
   p_pre->blind_sqr = p_pre->blind * p_pre->blind;
 }
