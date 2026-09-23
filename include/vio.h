@@ -15,6 +15,8 @@ which is included as part of this source code package.
 
 #include "voxel_map.h"
 #include "feature.h"
+#include <algorithm>
+#include <cstdlib>
 #include <opencv2/imgproc/imgproc_c.h>
 #include <pcl/filters/voxel_grid.h>
 #include <set>
