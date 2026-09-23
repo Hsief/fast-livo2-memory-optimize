@@ -85,10 +85,10 @@ evo:
 
 pcd_save:
   pcd_save_en: true
-  type: 0 # 0: Static colored world map, 1: Body frame intensity, 2: World frame intensity
-  colmap_output_en: true # need to set interval = -1
-  filter_size_pcd: 0.15
-  interval: -1
+  type: 2 # background only: world-frame XYZ + intensity; does not affect estimator
+  colmap_output_en: false # disable per-frame COLMAP image I/O during real-time SLAM
+  filter_size_pcd: 0.20 # export-only voxel size; LIO/VIO still uses original precision
+  interval: 50 # hand off one background chunk every 50 LiDAR frames
   # how many LiDAR frames saved in each pcd file;
   # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
 
