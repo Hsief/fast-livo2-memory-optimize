@@ -128,6 +128,13 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<int>("runtime/path_max_poses", path_max_poses_cfg, 1500);
   nh.param<int>("runtime/path_pub_interval", path_pub_interval, 5);
   nh.param<double>("runtime/diagnostics_interval_sec", diagnostics_interval_sec, 1.0);
+
+  nh.param<double>("vio/visual_map_voxel_size", visual_map_voxel_size, 0.5);
+  nh.param<int>("vio/visual_map_half_size", visual_map_half_size, 50);
+  nh.param<int>("vio/visual_map_max_voxels", visual_map_max_voxels, 40000);
+  nh.param<int>("vio/visual_map_max_points_per_voxel", visual_map_max_points_per_voxel, 8);
+  nh.param<int>("vio/visual_map_max_ref_age_frames", visual_map_max_ref_age_frames, 200);
+  nh.param<int>("vio/visual_map_prune_interval", visual_map_prune_interval, 10);
   max_lidar_buffer_size = static_cast<size_t>(std::max(1, max_lidar_buffer_cfg));
   max_image_buffer_size = static_cast<size_t>(std::max(1, max_image_buffer_cfg));
   max_imu_buffer_size = static_cast<size_t>(std::max(100, max_imu_buffer_cfg));
@@ -169,6 +176,12 @@ void LIVMapper::initializeComponents()
   vio_manager->patch_pyrimid_level = patch_pyrimid_level;
   vio_manager->exposure_estimate_en = exposure_estimate_en;
   vio_manager->colmap_output_en = colmap_output_en;
+  vio_manager->visual_map_voxel_size = std::max(0.1, visual_map_voxel_size);
+  vio_manager->visual_map_half_size = std::max(1, visual_map_half_size);
+  vio_manager->visual_map_max_voxels = std::max(1000, visual_map_max_voxels);
+  vio_manager->visual_map_max_points_per_voxel = std::max(1, visual_map_max_points_per_voxel);
+  vio_manager->visual_map_max_ref_age_frames = std::max(10, visual_map_max_ref_age_frames);
+  vio_manager->visual_map_prune_interval = std::max(1, visual_map_prune_interval);
   vio_manager->initializeVIO();
 
   p_imu->set_extrinsic(extT, extR);
@@ -573,11 +586,13 @@ void LIVMapper::printRuntimeDiagnostics()
                        ? newest_sensor_time - processed_time : 0.0;
 
   ROS_INFO("[NX_MON] lag=%.3fs buffers(lidar=%zu img=%zu imu=%zu prop=%zu) "
-           "root_voxels=%zu path=%zu pub_wait=%zu pcd_wait=%zu "
+           "root_voxels=%zu visual_voxels=%zu visual_points=%zu path=%zu pub_wait=%zu pcd_wait=%zu "
            "dropped(lidar=%llu img=%llu imu=%llu)",
            lag,
            lid_raw_data_buffer.size(), img_buffer.size(), imu_buffer.size(), prop_imu_buffer.size(),
            voxelmap_manager ? voxelmap_manager->voxel_map_.size() : 0,
+           vio_manager ? vio_manager->feat_map.size() : 0,
+           vio_manager ? vio_manager->visualMapPointCount() : 0,
            path.poses.size(),
            pcl_wait_pub ? pcl_wait_pub->size() : 0,
            (pcl_wait_save ? pcl_wait_save->size() : 0) +
