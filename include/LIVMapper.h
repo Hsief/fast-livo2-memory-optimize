@@ -41,7 +41,7 @@ public:
   void processImu();
   void printRuntimeDiagnostics();
   void initializeRuntimeLog();
-  long readProcStatusKb(const std::string &key) const;
+  long readProcStatusValue(const std::string &key) const;
   
   bool sync_packages(LidarMeasureGroup &meas);
   void prop_imu_once(StatesGroup &imu_prop_state, const double dt, V3D acc_avr, V3D angvel_avr);
