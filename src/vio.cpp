@@ -519,7 +519,7 @@ void VIOManager::retrieveFromVisualSparseMap(cv::Mat img, vector<pointWithVar> &
 {
   // Clear last-frame raw pointers before any visual-map deletion.
   visual_submap->reset();
-  pruneVisualMap();
+  if (visual_map_prune_en) pruneVisualMap();
   if (feat_map.empty()) return;
 
   double ts0 = omp_get_wtime();
