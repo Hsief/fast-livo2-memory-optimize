@@ -1,0 +1,24 @@
+<launch>
+<!-- Launch file for Livox AVIA LiDAR -->
+
+	<arg name="rviz" default="true" />
+	<arg name="image_republish" default="false" />
+
+	<rosparam command="load" file="$(find fast_livo)/config/avia.yaml" />
+
+	<node pkg="fast_livo" type="fastlivo_mapping" name="fast_livo2" output="screen">
+		<rosparam file="$(find fast_livo)/config/camera_pinhole.yaml" />
+	</node>
+	
+	<group if="$(arg rviz)">
+		<node launch-prefix="nice" pkg="rviz" type="rviz" name="fast_livo2_rviz" args="-d $(find fast_livo)/rviz_cfg/fast_livo2.rviz" />
+	</group>
+
+	<!-- 仅在相机只发 compressed 时才启用（bag 里有 raw 时不需要，否则双路图像冲突） -->
+	<group if="$(arg image_republish)">
+		<node pkg="image_transport" type="republish" name="fast_livo2_image_republish" args="compressed in:=/left_camera/image raw out:=/left_camera/image" output="screen" respawn="true"/>
+	</group>
+
+launch-prefix="gdb -ex run --args"
+launch-prefix="valgrind --leak-check=full"
+</launch> 	
