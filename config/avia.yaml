@@ -27,7 +27,7 @@ time_offset:
   exposure_time_init: 0.0
 
 preprocess:
-  point_filter_num: 1
+  point_filter_num: 2  # Xavier NX: halve raw Avia points before downstream processing
   filter_size_surf: 0.1
   lidar_type: 1 # 1：livox custom  2：pointcloud2
   scan_line: 6
@@ -44,6 +44,14 @@ vio:
   inverse_composition_en: false
   exposure_estimate_en: true
   inv_expo_cov: 0.1
+  # Bounded sparse visual map: prevents historical reference images from
+  # keeping RAM alive indefinitely during long runs.
+  visual_map_voxel_size: 0.5
+  visual_map_half_size: 50
+  visual_map_max_voxels: 40000
+  visual_map_max_points_per_voxel: 8
+  visual_map_max_ref_age_frames: 200
+  visual_map_prune_interval: 10
 
 imu:
   imu_en: true
@@ -67,13 +75,17 @@ local_map:
   map_sliding_en: true
   half_map_size: 50
   sliding_thresh: 8
+  max_root_voxels: 180000   # emergency hard cap; trims farthest root voxels in batches
+  root_voxel_reserve: 60000 # avoid repeated unordered_map rehash spikes
 
 uav:
   imu_rate_odom: false
   gravity_align_en: false
 
 publish:
-  dense_map_en: true
+  dense_map_en: false  # estimator stays unchanged; RViz uses the viz filter below
+  viz_voxel_size: 0.25  # visualization-only downsample, does NOT change LIO/VIO estimation
+  viz_publish_interval: 1
   pub_effect_point_en: false 
   pub_plane_en: false
   pub_scan_num: 1
@@ -84,9 +96,9 @@ evo:
   pose_output_en: false
 
 pcd_save:
-  pcd_save_en: true
+  pcd_save_en: false  # IMPORTANT: interval=-1 otherwise accumulates the whole map in RAM
   type: 0 # 0: Static colored world map, 1: Body frame intensity, 2: World frame intensity
-  colmap_output_en: true # need to set interval = -1
+  colmap_output_en: false # enable only for offline export; it increases memory/I/O pressure
   filter_size_pcd: 0.15
   interval: -1
   # how many LiDAR frames saved in each pcd file;
@@ -95,3 +107,18 @@ pcd_save:
 image_save:
   img_save_en: false
   interval: 1
+
+# Xavier NX 6GB real-time safety limits.
+# Old sensor data is intentionally dropped if the estimator cannot keep up:
+# bounded latency is preferred over an ever-growing backlog.
+runtime:
+  lidar_sub_queue_size: 4
+  imu_sub_queue_size: 800
+  image_sub_queue_size: 3
+  max_lidar_buffer_size: 4
+  max_image_buffer_size: 3
+  max_imu_buffer_size: 1600
+  max_prop_imu_buffer_size: 1600
+  path_max_poses: 1500
+  path_pub_interval: 5
+  diagnostics_interval_sec: 1.0

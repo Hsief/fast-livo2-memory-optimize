@@ -15,6 +15,8 @@ which is included as part of this source code package.
 
 #include "voxel_map.h"
 #include "feature.h"
+#include <algorithm>
+#include <cstdlib>
 #include <opencv2/imgproc/imgproc_c.h>
 #include <pcl/filters/voxel_grid.h>
 #include <set>
@@ -106,6 +108,15 @@ public:
   int patch_pyrimid_level, patch_size, patch_size_total, patch_size_half, border, warp_len;
   int max_iterations, total_points;
 
+  // Bounded visual sparse map for embedded/long-running operation.
+  double visual_map_voxel_size = 0.5;
+  int visual_map_half_size = 50;              // voxels; 50 * 0.5m = 25m half extent
+  int visual_map_max_voxels = 40000;
+  int visual_map_max_points_per_voxel = 8;
+  int visual_map_max_ref_age_frames = 200;
+  int visual_map_prune_interval = 10;
+  unsigned long long visual_map_prune_counter = 0;
+
   double img_point_cov, outlier_threshold, ncc_thre;
   
   SubSparseMap *visual_submap;
@@ -161,6 +172,8 @@ public:
   void warpAffine(const Matrix2d &A_cur_ref, const cv::Mat &img_ref, const Vector2d &px_ref, const int level_ref, const int search_level,
                   const int pyramid_level, const int halfpatch_size, float *patch);
   void insertPointIntoVoxelMap(VisualPoint *pt_new);
+  void pruneVisualMap();
+  size_t visualMapPointCount() const;
   void plotTrackedPoints();
   void updateFrameState(StatesGroup state);
   void projectPatchFromRefToCur(const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &plane_map);
