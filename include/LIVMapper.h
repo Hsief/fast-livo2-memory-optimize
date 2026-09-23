@@ -45,6 +45,13 @@ public:
     PointCloudXYZRGB::Ptr rgb;
     PointCloudXYZI::Ptr intensity;
   };
+
+  struct BackgroundColorVoxel
+  {
+    double sx = 0.0, sy = 0.0, sz = 0.0;
+    uint64_t sr = 0, sg = 0, sb = 0;
+    uint32_t count = 0;
+  };
   void startBackgroundPcdWriter();
   void stopBackgroundPcdWriter();
   void backgroundPcdWriterLoop();
@@ -160,6 +167,7 @@ public:
   size_t background_pcd_max_jobs = 4;
   double background_pcd_voxel_size = 0.20;
   unsigned long long background_pcd_dropped_jobs = 0;
+  std::unordered_map<VOXEL_LOCATION, BackgroundColorVoxel> background_color_voxels;
 
   ofstream fout_pre, fout_out, fout_visual_pos, fout_lidar_pos, fout_points;
 
