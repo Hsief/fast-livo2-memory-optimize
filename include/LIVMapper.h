@@ -21,6 +21,7 @@ which is included as part of this source code package.
 #include <nav_msgs/Path.h>
 #include <vikit/camera_loader.h>
 #include <thread>
+#include <atomic>
 
 class LIVMapper
 {
@@ -56,6 +57,9 @@ public:
   void stopBackgroundPcdWriter();
   void backgroundPcdWriterLoop();
   void enqueueBackgroundPcd(const BackgroundPcdJob &job);
+  void startWatchdog();
+  void stopWatchdog();
+  void watchdogLoop();
   
   bool sync_packages(LidarMeasureGroup &meas);
   void prop_imu_once(StatesGroup &imu_prop_state, const double dt, V3D acc_avr, V3D angvel_avr);
@@ -168,6 +172,12 @@ public:
   double background_pcd_voxel_size = 0.20;
   unsigned long long background_pcd_dropped_jobs = 0;
   std::unordered_map<VOXEL_LOCATION, BackgroundColorVoxel> background_color_voxels;
+
+  std::thread watchdog_thread;
+  std::atomic<bool> watchdog_stop{false};
+  std::atomic<int> watchdog_phase{0};
+  std::atomic<int> watchdog_callbacks_last_cycle{0};
+  std::atomic<unsigned long long> watchdog_estimator_cycles{0};
 
   ofstream fout_pre, fout_out, fout_visual_pos, fout_lidar_pos, fout_points;
 
