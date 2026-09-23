@@ -401,8 +401,9 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
       total_residual += fabs(ptpl_list_[i].dis_to_plane_);
     }
     effct_feat_num_ = ptpl_list_.size();
-    cout << "[ LIO ] Raw feature num: " << feats_undistort_->size() << ", downsampled feature num:" << feats_down_size_ 
-         << " effective feature num: " << effct_feat_num_ << " average residual: " << total_residual / effct_feat_num_ << endl;
+    ROS_DEBUG("[LIO] raw=%zu down=%d effective=%d avg_residual=%.6f",
+              feats_undistort_->size(), feats_down_size_, effct_feat_num_,
+              effct_feat_num_ > 0 ? total_residual / effct_feat_num_ : 0.0);
 
     /*** Computation of Measuremnt Jacobian matrix H and measurents covarience
      * ***/
@@ -918,7 +919,7 @@ void VoxelMapManager::mapSliding()
 {
   if((position_last_ - last_slide_position).norm() < config_setting_.sliding_thresh)
   {
-    std::cout<<RED<<"[DEBUG]: Last sliding length "<<(position_last_ - last_slide_position).norm()<<RESET<<"\n";
+    ROS_DEBUG("[MapSliding] last sliding length=%.6f", (position_last_ - last_slide_position).norm());
     return;
   }
 
