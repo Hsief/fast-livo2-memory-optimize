@@ -17,6 +17,7 @@ which is included as part of this source code package.
 #include <ctime>
 #include <fstream>
 #include <sstream>
+#include <unistd.h>
 
 LIVMapper::LIVMapper(ros::NodeHandle &nh)
     : extT(0, 0, 0),
@@ -1714,8 +1715,8 @@ void LIVMapper::publish_path(const ros::Publisher pubPath)
   constexpr size_t kMaxPathPoses = 2000;
   if (path.poses.size() > kMaxPathPoses)
   {
-    const size_t erase_count = path.poses.size() - kMaxPathPoses;
-    path.poses.erase(path.poses.begin(), path.poses.begin() + erase_count);
+    constexpr size_t kTrimPathPoses = 500;
+    path.poses.erase(path.poses.begin(), path.poses.begin() + kTrimPathPoses);
   }
 
   pubPath.publish(path);
