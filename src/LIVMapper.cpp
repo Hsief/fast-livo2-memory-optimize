@@ -11,6 +11,8 @@ which is included as part of this source code package.
 */
 
 #include "LIVMapper.h"
+#include <sys/stat.h>
+#include <sys/types.h>
 
 LIVMapper::LIVMapper(ros::NodeHandle &nh)
     : extT(0, 0, 0),
@@ -39,13 +41,21 @@ LIVMapper::LIVMapper(ros::NodeHandle &nh)
   voxelmap_manager.reset(new VoxelMapManager(voxel_config, voxel_map));
   vio_manager.reset(new VIOManager());
   root_dir = ROOT_DIR;
+  initializeRuntimeLog();
   initializeFiles();
   initializeComponents();
   path.header.stamp = ros::Time::now();
   path.header.frame_id = "camera_init";
 }
 
-LIVMapper::~LIVMapper() {}
+LIVMapper::~LIVMapper()
+{
+  if (runtime_log_file.is_open())
+  {
+    runtime_log_file.flush();
+    runtime_log_file.close();
+  }
+}
 
 void LIVMapper::readParameters(ros::NodeHandle &nh)
 {
@@ -132,6 +142,9 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<int>("runtime/path_max_poses", path_max_poses_cfg, 1500);
   nh.param<int>("runtime/path_pub_interval", path_pub_interval, 5);
   nh.param<double>("runtime/diagnostics_interval_sec", diagnostics_interval_sec, 1.0);
+  nh.param<bool>("runtime/log_to_file", runtime_log_to_file, true);
+  nh.param<int>("runtime/log_flush_interval", runtime_log_flush_interval, 5);
+  runtime_log_flush_interval = std::max(1, runtime_log_flush_interval);
 
   nh.param<double>("vio/visual_map_voxel_size", visual_map_voxel_size, 0.5);
   nh.param<int>("vio/visual_map_half_size", visual_map_half_size, 50);
@@ -224,6 +237,65 @@ void LIVMapper::initializeComponents()
   if (!exposure_estimate_en) p_imu->disable_exposure_est();
 
   slam_mode_ = (img_en && lidar_en) ? LIVO : imu_en ? ONLY_LIO : ONLY_LO;
+}
+
+long LIVMapper::readProcStatusValue(const std::string &key) const
+{
+  std::ifstream status("/proc/self/status");
+  if (!status.is_open()) return -1;
+
+  std::string line;
+  while (std::getline(status, line))
+  {
+    if (line.compare(0, key.size(), key) != 0) continue;
+    std::istringstream iss(line.substr(key.size()));
+    long value = -1;
+    iss >> value;
+    return value;
+  }
+  return -1;
+}
+
+void LIVMapper::initializeRuntimeLog()
+{
+  if (!runtime_log_to_file) return;
+
+  const std::string log_root = std::string(ROOT_DIR) + "Log";
+  const std::string log_dir = log_root + "/runtime";
+  ::mkdir(log_root.c_str(), 0755);
+  ::mkdir(log_dir.c_str(), 0755);
+
+  std::time_t now = std::time(nullptr);
+  std::tm tm_buf;
+  localtime_r(&now, &tm_buf);
+  char time_buf[32] = {0};
+  std::strftime(time_buf, sizeof(time_buf), "%Y%m%d_%H%M%S", &tm_buf);
+
+  runtime_log_path = log_dir + "/fast_livo2_runtime_" + std::string(time_buf) + ".csv";
+  runtime_log_file.open(runtime_log_path, std::ios::out);
+  if (!runtime_log_file.is_open())
+  {
+    ROS_ERROR("Failed to open runtime log: %s", runtime_log_path.c_str());
+    runtime_log_to_file = false;
+    return;
+  }
+
+  runtime_log_file
+      << "# FAST-LIVO2 runtime diagnostics\n"
+      << "# node=fast_livo2,package=fast_livo\n"
+      << "# values are sampled approximately every diagnostics_interval_sec\n"
+      << "wall_epoch_s,ros_time_s,processed_time_s,newest_sensor_time_s,lag_s,"
+      << "rss_kb,vmsize_kb,vmswap_kb,threads,"
+      << "lidar_buf,img_buf,imu_buf,prop_imu_buf,"
+      << "root_voxels,visual_voxels,visual_points,path_poses,pub_wait_points,pcd_wait_points,"
+      << "dropped_lidar,dropped_img,dropped_imu,"
+      << "root_pruned_total,root_hardcap_pruned_total,visual_pruned_voxels_total,visual_pruned_points_total,"
+      << "pos_x,pos_y,pos_z,vel_norm,"
+      << "lio_down_s,lio_icp_s,lio_map_s,lio_total_s,lio_avg_s,"
+      << "vio_retrieve_s,vio_ekf_s,vio_generate_s,vio_update_s,vio_ref_s,vio_total_s,vio_avg_s\n";
+  runtime_log_file.flush();
+
+  ROS_INFO("Runtime diagnostics CSV: %s", runtime_log_path.c_str());
 }
 
 void LIVMapper::initializeFiles() 
@@ -531,8 +603,13 @@ void LIVMapper::handleLIO()
   publish_path(pubPath);
   publish_mavros(mavros_pose_publisher);
 
+  last_lio_downsample_s = t_down - t0;
+  last_lio_icp_s = t2 - t1;
+  last_lio_map_s = t4 - t3;
+  last_lio_total_s = t4 - t0;
+
   frame_num++;
-  aver_time_consu = aver_time_consu * (frame_num - 1) / frame_num + (t4 - t0) / frame_num;
+  aver_time_consu = aver_time_consu * (frame_num - 1) / frame_num + last_lio_total_s / frame_num;
 
   // aver_time_icp = aver_time_icp * (frame_num - 1) / frame_num + (t2 - t1) / frame_num;
   // aver_time_map_inre = aver_time_map_inre * (frame_num - 1) / frame_num + (t4 - t3) / frame_num;
@@ -547,7 +624,7 @@ void LIVMapper::handleLIO()
   //         t2 - t1, t4 - t3, t4 - t0, aver_time_icp, aver_time_map_inre, aver_time_consu);
   ROS_INFO_THROTTLE(1.0,
                     "[NX_LIO] down=%.4f s icp=%.4f s map=%.4f s total=%.4f s avg=%.4f s",
-                    t_down - t0, t2 - t1, t4 - t3, t4 - t0, aver_time_consu);
+                    last_lio_downsample_s, last_lio_icp_s, last_lio_map_s, last_lio_total_s, aver_time_consu);
 
   euler_cur = RotMtoEuler(_state.rot_end);
   fout_out << std::setw(20) << LidarMeasures.last_lio_update_time - _first_lidar_time << " " << euler_cur.transpose() * 57.3 << " "
@@ -620,10 +697,15 @@ void LIVMapper::printRuntimeDiagnostics()
   const double lag = (processed_time > 0.0 && newest_sensor_time > processed_time)
                        ? newest_sensor_time - processed_time : 0.0;
 
-  ROS_INFO("[NX_MON] lag=%.3fs buffers(lidar=%zu img=%zu imu=%zu prop=%zu) "
+  const long rss_kb = readProcStatusValue("VmRSS:");
+  const long vmsize_kb = readProcStatusValue("VmSize:");
+  const long vmswap_kb = readProcStatusValue("VmSwap:");
+  const long threads = readProcStatusValue("Threads:");
+
+  ROS_INFO("[NX_MON] lag=%.3fs rss=%ldMB swap=%ldMB buffers(lidar=%zu img=%zu imu=%zu prop=%zu) "
            "root_voxels=%zu visual_voxels=%zu visual_points=%zu path=%zu pub_wait=%zu pcd_wait=%zu "
            "dropped(lidar=%llu img=%llu imu=%llu)",
-           lag,
+           lag, rss_kb >= 0 ? rss_kb / 1024 : -1, vmswap_kb >= 0 ? vmswap_kb / 1024 : -1,
            lid_raw_data_buffer.size(), img_buffer.size(), imu_buffer.size(), prop_imu_buffer.size(),
            voxelmap_manager ? voxelmap_manager->voxel_map_.size() : 0,
            vio_manager ? vio_manager->feat_map.size() : 0,
@@ -633,6 +715,45 @@ void LIVMapper::printRuntimeDiagnostics()
            (pcl_wait_save ? pcl_wait_save->size() : 0) +
              (pcl_wait_save_intensity ? pcl_wait_save_intensity->size() : 0),
            dropped_lidar_frames, dropped_image_frames, dropped_imu_messages);
+
+  if (runtime_log_to_file && runtime_log_file.is_open())
+  {
+    const size_t root_voxels = voxelmap_manager ? voxelmap_manager->voxel_map_.size() : 0;
+    const size_t visual_voxels = vio_manager ? vio_manager->feat_map.size() : 0;
+    const size_t visual_points = vio_manager ? vio_manager->visualMapPointCount() : 0;
+    const size_t pcd_wait_points =
+        (pcl_wait_save ? pcl_wait_save->size() : 0) +
+        (pcl_wait_save_intensity ? pcl_wait_save_intensity->size() : 0);
+
+    const double wall_epoch_s = static_cast<double>(std::time(nullptr));
+    const double ros_time_s = ros::Time::now().toSec();
+    const double vel_norm = _state.vel_end.norm();
+
+    runtime_log_file << std::fixed << std::setprecision(6)
+        << wall_epoch_s << ',' << ros_time_s << ',' << processed_time << ',' << newest_sensor_time << ',' << lag << ','
+        << rss_kb << ',' << vmsize_kb << ',' << vmswap_kb << ',' << threads << ','
+        << lid_raw_data_buffer.size() << ',' << img_buffer.size() << ',' << imu_buffer.size() << ',' << prop_imu_buffer.size() << ','
+        << root_voxels << ',' << visual_voxels << ',' << visual_points << ',' << path.poses.size() << ','
+        << (pcl_wait_pub ? pcl_wait_pub->size() : 0) << ',' << pcd_wait_points << ','
+        << dropped_lidar_frames << ',' << dropped_image_frames << ',' << dropped_imu_messages << ','
+        << (voxelmap_manager ? voxelmap_manager->pruned_root_voxels_total : 0) << ','
+        << (voxelmap_manager ? voxelmap_manager->hardcap_root_voxels_total : 0) << ','
+        << (vio_manager ? vio_manager->pruned_visual_voxels_total : 0) << ','
+        << (vio_manager ? vio_manager->pruned_visual_points_total : 0) << ','
+        << _state.pos_end.x() << ',' << _state.pos_end.y() << ',' << _state.pos_end.z() << ',' << vel_norm << ','
+        << last_lio_downsample_s << ',' << last_lio_icp_s << ',' << last_lio_map_s << ',' << last_lio_total_s << ',' << aver_time_consu << ','
+        << (vio_manager ? vio_manager->last_retrieve_time : 0.0) << ','
+        << (vio_manager ? vio_manager->last_ekf_stage_time : 0.0) << ','
+        << (vio_manager ? vio_manager->last_generate_time : 0.0) << ','
+        << (vio_manager ? vio_manager->last_update_map_time : 0.0) << ','
+        << (vio_manager ? vio_manager->last_reference_time : 0.0) << ','
+        << (vio_manager ? vio_manager->last_total_time : 0.0) << ','
+        << (vio_manager ? vio_manager->ave_total : 0.0) << '\n';
+
+    ++runtime_log_rows;
+    if ((runtime_log_rows % static_cast<unsigned long long>(runtime_log_flush_interval)) == 0ULL)
+      runtime_log_file.flush();
+  }
 }
 
 void LIVMapper::run() 
