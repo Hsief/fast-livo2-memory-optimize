@@ -21,6 +21,7 @@ which is included as part of this source code package.
 #include <image_transport/image_transport.h>
 #include <nav_msgs/Path.h>
 #include <vikit/camera_loader.h>
+#include <ctime>
 
 class LIVMapper
 {
@@ -39,6 +40,8 @@ public:
   void savePCD();
   void processImu();
   void printRuntimeDiagnostics();
+  void initializeRuntimeLog();
+  long readProcStatusKb(const std::string &key) const;
   
   bool sync_packages(LidarMeasureGroup &meas);
   void prop_imu_once(StatesGroup &imu_prop_state, const double dt, V3D acc_avr, V3D angvel_avr);
@@ -102,6 +105,17 @@ public:
   size_t path_max_poses = 1500;
   int path_pub_interval = 5;
   double diagnostics_interval_sec = 1.0;
+  bool runtime_log_to_file = true;
+  int runtime_log_flush_interval = 5;
+  unsigned long long runtime_log_rows = 0;
+  std::string runtime_log_path;
+  std::ofstream runtime_log_file;
+
+  double last_lio_downsample_s = 0.0;
+  double last_lio_icp_s = 0.0;
+  double last_lio_map_s = 0.0;
+  double last_lio_total_s = 0.0;
+
   double viz_voxel_size = 0.25;
   int viz_publish_interval = 1;
 
