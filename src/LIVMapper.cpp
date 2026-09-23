@@ -19,6 +19,7 @@ which is included as part of this source code package.
 #include <sstream>
 #include <unistd.h>
 #include <limits>
+#include <unordered_set>
 
 LIVMapper::LIVMapper(ros::NodeHandle &nh)
     : extT(0, 0, 0),
