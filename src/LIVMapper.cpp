@@ -1575,18 +1575,46 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
     }
   }
 
-  /*** Publish Frame ***/
-  if (pubLaserCloudFullRes.getNumSubscribers() > 0)
+  /*** Publish Frame: visualization-only voxelized copy ***/
+  static int viz_publish_count = 0;
+  bool has_visual_cloud = false;
+  if (slam_mode_ == LIVO && LidarMeasures.lio_vio_flg == VIO)
+    has_visual_cloud = !laserCloudWorldRGB->empty();
+  else if (slam_mode_ == ONLY_LIO || slam_mode_ == ONLY_LO)
+    has_visual_cloud = !pcl_w_wait_pub->empty();
+
+  if (has_visual_cloud) ++viz_publish_count;
+
+  if (has_visual_cloud &&
+      viz_publish_count >= viz_publish_interval &&
+      pubLaserCloudFullRes.getNumSubscribers() > 0)
   {
+    viz_publish_count = 0;
     sensor_msgs::PointCloud2 laserCloudmsg;
+
     if (slam_mode_ == LIVO && LidarMeasures.lio_vio_flg == VIO)
     {
-      pcl::toROSMsg(*laserCloudWorldRGB, laserCloudmsg);
+      PointCloudXYZRGB::Ptr rviz_cloud(new PointCloudXYZRGB());
+      pcl::VoxelGrid<PointTypeRGB> viz_filter;
+      viz_filter.setLeafSize(viz_voxel_size, viz_voxel_size, viz_voxel_size);
+      viz_filter.setInputCloud(laserCloudWorldRGB);
+      viz_filter.filter(*rviz_cloud);
+      pcl::toROSMsg(*rviz_cloud, laserCloudmsg);
+      ROS_DEBUG("[RVIZ] RGB raw=%zu display=%zu voxel=%.2fm",
+                laserCloudWorldRGB->size(), rviz_cloud->size(), viz_voxel_size);
     }
-    if (slam_mode_ == ONLY_LIO || slam_mode_ == ONLY_LO)
+    else
     {
-      pcl::toROSMsg(*pcl_w_wait_pub, laserCloudmsg);
+      PointCloudXYZI::Ptr rviz_cloud(new PointCloudXYZI());
+      pcl::VoxelGrid<PointType> viz_filter;
+      viz_filter.setLeafSize(viz_voxel_size, viz_voxel_size, viz_voxel_size);
+      viz_filter.setInputCloud(pcl_w_wait_pub);
+      viz_filter.filter(*rviz_cloud);
+      pcl::toROSMsg(*rviz_cloud, laserCloudmsg);
+      ROS_DEBUG("[RVIZ] cloud raw=%zu display=%zu voxel=%.2fm",
+                pcl_w_wait_pub->size(), rviz_cloud->size(), viz_voxel_size);
     }
+
     laserCloudmsg.header.stamp = ros::Time::now();
     laserCloudmsg.header.frame_id = "camera_init";
     pubLaserCloudFullRes.publish(laserCloudmsg);
