@@ -50,13 +50,11 @@ void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
   nh.param<bool>("local_map/map_sliding_en", voxel_config.map_sliding_en, false);
   nh.param<int>("local_map/half_map_size", voxel_config.half_map_size, 100);
   nh.param<double>("local_map/sliding_thresh", voxel_config.sliding_thresh, 8);
-#ifdef ARM_ARCH
-  nh.param<int>("local_map/max_root_voxels", voxel_config.max_root_voxels, 180000);
-  nh.param<int>("local_map/root_voxel_reserve", voxel_config.root_voxel_reserve, 60000);
-#else
+  // Accuracy-first default: do not hard-trim the estimator map unless the
+  // existing YAML explicitly opts in. The original local-map sliding policy
+  // remains unchanged.
   nh.param<int>("local_map/max_root_voxels", voxel_config.max_root_voxels, 0);
   nh.param<int>("local_map/root_voxel_reserve", voxel_config.root_voxel_reserve, 60000);
-#endif
 }
 
 VoxelMapManager::~VoxelMapManager()
