@@ -1,0 +1,23 @@
+<launch>
+  <!-- Xavier NX 6GB profile. RViz is disabled by default; run it on a remote PC
+       or explicitly pass rviz:=true for local diagnostics. -->
+  <arg name="rviz" default="false" />
+  <arg name="image_republish" default="false" />
+
+  <rosparam command="load" file="$(find fast_livo)/config/avia.yaml" />
+
+  <node pkg="fast_livo" type="fastlivo_mapping" name="fast_livo2" output="screen">
+    <rosparam file="$(find fast_livo)/config/camera_pinhole.yaml" />
+  </node>
+
+  <group if="$(arg rviz)">
+    <node launch-prefix="nice -n 10" pkg="rviz" type="rviz" name="fast_livo2_rviz"
+          args="-d $(find fast_livo)/rviz_cfg/fast_livo2.rviz" />
+  </group>
+
+  <group if="$(arg image_republish)">
+    <node pkg="image_transport" type="republish" name="fast_livo2_image_republish"
+          args="compressed in:=/left_camera/image raw out:=/left_camera/image"
+          output="screen" respawn="true"/>
+  </group>
+</launch>
