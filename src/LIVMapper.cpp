@@ -149,6 +149,26 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   imu_sub_queue_size = std::max(10, imu_sub_queue_size);
   path_pub_interval = std::max(1, path_pub_interval);
 
+#ifdef ARM_ARCH
+  // Xavier/RK-class devices share limited memory between CPU/GPU. Keep the
+  // original YAML/launch files untouched, but prevent two known unbounded/
+  // high-bandwidth modes from exhausting RAM at runtime.
+  if (dense_map_en)
+  {
+    ROS_WARN("ARM runtime: dense_map_en is disabled for online visualization. "
+             "Estimator point density is unchanged; only the published cloud is downsampled.");
+    dense_map_en = false;
+  }
+  if (pcd_save_en && pcd_save_interval < 0)
+  {
+    ROS_WARN("ARM runtime: pcd_save interval=-1 would accumulate the entire map in RAM. "
+             "Switching to chunked saving every 50 LiDAR frames.");
+    pcd_save_interval = 50;
+  }
+  // RViz/PointCloud2 serialization is memory-bandwidth heavy on unified-memory SoCs.
+  viz_publish_interval = std::max(2, viz_publish_interval);
+#endif
+
   p_pre->blind_sqr = p_pre->blind * p_pre->blind;
 }
 
