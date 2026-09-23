@@ -14,14 +14,12 @@ which is included as part of this source code package.
 #define LIV_MAPPER_H
 
 #include "IMU_Processing.h"
-#include <algorithm>
 #include "vio.h"
 #include "preprocess.h"
 #include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.h>
 #include <nav_msgs/Path.h>
 #include <vikit/camera_loader.h>
-#include <ctime>
 
 class LIVMapper
 {
@@ -39,10 +37,6 @@ public:
   void handleLIO();
   void savePCD();
   void processImu();
-  void printRuntimeDiagnostics();
-  void initializeRuntimeLog();
-  long readProcStatusValue(const std::string &key) const;
-  long readMemInfoValue(const std::string &key) const;
   
   bool sync_packages(LidarMeasureGroup &meas);
   void prop_imu_once(StatesGroup &imu_prop_state, const double dt, V3D acc_avr, V3D angvel_avr);
@@ -93,43 +87,6 @@ public:
   bool lidar_map_inited = false, pcd_save_en = false, img_save_en = false, pub_effect_point_en = false, pose_output_en = false, ros_driver_fix_en = false, hilti_en = false;
   int img_save_interval = 1, pcd_save_interval = -1, pcd_save_type = 0;
   int pub_scan_num = 1;
-
-  // Jetson/Xavier bounded-runtime controls. Real-time SLAM must never allow
-  // ROS queues, internal sensor buffers, or RViz path history to grow forever.
-  int lidar_sub_queue_size = 200000;
-  int imu_sub_queue_size = 200000;
-  int image_sub_queue_size = 200000;
-  size_t max_lidar_buffer_size = 4;
-  size_t max_image_buffer_size = 3;
-  size_t max_imu_buffer_size = 1600;
-  size_t max_prop_imu_buffer_size = 1600;
-  size_t path_max_poses = 1500;
-  int path_pub_interval = 5;
-  double diagnostics_interval_sec = 1.0;
-  bool runtime_log_to_file = true;
-  int runtime_log_flush_interval = 1;
-  unsigned long long runtime_log_rows = 0;
-  std::string runtime_log_path;
-  std::ofstream runtime_log_file;
-
-  double last_lio_downsample_s = 0.0;
-  double last_lio_icp_s = 0.0;
-  double last_lio_map_s = 0.0;
-  double last_lio_total_s = 0.0;
-
-  double viz_voxel_size = 0.25;
-  int viz_publish_interval = 1;
-
-  bool visual_map_prune_en = false;
-  double visual_map_voxel_size = 0.5;
-  int visual_map_half_size = 50;
-  int visual_map_max_voxels = 40000;
-  int visual_map_max_points_per_voxel = 8;
-  int visual_map_max_ref_age_frames = 200;
-  int visual_map_prune_interval = 10;
-  unsigned long long dropped_lidar_frames = 0;
-  unsigned long long dropped_image_frames = 0;
-  unsigned long long dropped_imu_messages = 0;
 
   StatesGroup imu_propagate, latest_ekf_state;
 
@@ -185,7 +142,6 @@ public:
   ofstream fout_pre, fout_out, fout_visual_pos, fout_lidar_pos, fout_points;
 
   pcl::VoxelGrid<PointType> downSizeFilterSurf;
-  pcl::VoxelGrid<PointType> downSizeFilterViz;
 
   V3D euler_cur;
 
