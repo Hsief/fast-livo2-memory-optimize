@@ -50,6 +50,14 @@ void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
   nh.param<bool>("local_map/map_sliding_en", voxel_config.map_sliding_en, false);
   nh.param<int>("local_map/half_map_size", voxel_config.half_map_size, 100);
   nh.param<double>("local_map/sliding_thresh", voxel_config.sliding_thresh, 8);
+  nh.param<int>("local_map/max_root_voxels", voxel_config.max_root_voxels, 0);
+  nh.param<int>("local_map/root_voxel_reserve", voxel_config.root_voxel_reserve, 60000);
+}
+
+VoxelMapManager::~VoxelMapManager()
+{
+  for (auto &kv : voxel_map_) delete kv.second;
+  voxel_map_.clear();
 }
 
 void VoxelOctoTree::init_plane(const std::vector<pointWithVar> &points, VoxelPlane *plane)
@@ -359,7 +367,7 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     cross_mat_list_.push_back(point_crossmat);
   }
 
-  vector<pointWithVar>().swap(pv_list_);
+  pv_list_.clear();
   pv_list_.resize(feats_down_size_);
 
   int rematch_num = 0;
@@ -369,10 +377,11 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
   I_STATE.setIdentity();
 
   bool flg_EKF_inited, flg_EKF_converged, EKF_stop_flg = 0;
+  pcl::PointCloud<pcl::PointXYZI>::Ptr world_lidar(new pcl::PointCloud<pcl::PointXYZI>);
+  world_lidar->reserve(feats_down_body_->size());
   for (int iterCount = 0; iterCount < config_setting_.max_iterations_; iterCount++)
   {
     double total_residual = 0.0;
-    pcl::PointCloud<pcl::PointXYZI>::Ptr world_lidar(new pcl::PointCloud<pcl::PointXYZI>);
     TransformLidar(state_.rot_end, state_.pos_end, feats_down_body_, world_lidar);
     M3D rot_var = state_.cov.block<3, 3>(0, 0);
     M3D t_var = state_.cov.block<3, 3>(3, 3);
@@ -401,8 +410,10 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
       total_residual += fabs(ptpl_list_[i].dis_to_plane_);
     }
     effct_feat_num_ = ptpl_list_.size();
-    cout << "[ LIO ] Raw feature num: " << feats_undistort_->size() << ", downsampled feature num:" << feats_down_size_ 
-         << " effective feature num: " << effct_feat_num_ << " average residual: " << total_residual / effct_feat_num_ << endl;
+    ROS_INFO_STREAM_THROTTLE(1.0, "[LIO] raw=" << feats_undistort_->size()
+                             << " down=" << feats_down_size_
+                             << " effective=" << effct_feat_num_
+                             << " avg_residual=" << (effct_feat_num_ > 0 ? total_residual / effct_feat_num_ : 0.0));
 
     /*** Computation of Measuremnt Jacobian matrix H and measurents covarience
      * ***/
@@ -513,8 +524,8 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
 void VoxelMapManager::TransformLidar(const Eigen::Matrix3d rot, const Eigen::Vector3d t, const PointCloudXYZI::Ptr &input_cloud,
                                      pcl::PointCloud<pcl::PointXYZI>::Ptr &trans_cloud)
 {
-  pcl::PointCloud<pcl::PointXYZI>().swap(*trans_cloud);
-  trans_cloud->reserve(input_cloud->size());
+  trans_cloud->clear();
+  if (trans_cloud->capacity() < input_cloud->size()) trans_cloud->reserve(input_cloud->size());
   for (size_t i = 0; i < input_cloud->size(); i++)
   {
     pcl::PointXYZINormal p_c = input_cloud->points[i];
@@ -538,6 +549,7 @@ void VoxelMapManager::BuildVoxelMap()
   std::vector<int> layer_init_num = config_setting_.layer_init_num_;
 
   std::vector<pointWithVar> input_points;
+  input_points.reserve(feats_down_world_->size());
 
   for (size_t i = 0; i < feats_down_world_->size(); i++)
   {
@@ -638,6 +650,7 @@ void VoxelMapManager::UpdateVoxelMap(const std::vector<pointWithVar> &input_poin
       voxel_map_[position]->UpdateOctoTree(p_v);
     }
   }
+  enforceRootVoxelLimit();
 }
 
 void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, std::vector<PointToPlane> &ptpl_list)
@@ -792,8 +805,10 @@ void VoxelMapManager::pubVoxelMap()
   ros::Rate loop(500);
   float use_alpha = 0.8;
   visualization_msgs::MarkerArray voxel_plane;
-  voxel_plane.markers.reserve(1000000);
+  const size_t marker_reserve = std::min<size_t>(50000, voxel_map_.size() * 2 + 64);
+  voxel_plane.markers.reserve(marker_reserve);
   std::vector<VoxelPlane> pub_plane_list;
+  pub_plane_list.reserve(marker_reserve);
   for (auto iter = voxel_map_.begin(); iter != voxel_map_.end(); iter++)
   {
     GetUpdatePlane(iter->second, config_setting_.max_layer_, pub_plane_list);
@@ -925,7 +940,6 @@ void VoxelMapManager::mapSliding()
 {
   if((position_last_ - last_slide_position).norm() < config_setting_.sliding_thresh)
   {
-    std::cout<<RED<<"[DEBUG]: Last sliding length "<<(position_last_ - last_slide_position).norm()<<RESET<<"\n";
     return;
   }
 
@@ -943,8 +957,58 @@ void VoxelMapManager::mapSliding()
                     (int64_t)loc_xyz[1] + config_setting_.half_map_size, (int64_t)loc_xyz[1] - config_setting_.half_map_size,
                     (int64_t)loc_xyz[2] + config_setting_.half_map_size, (int64_t)loc_xyz[2] - config_setting_.half_map_size);
   double t_sliding_end = omp_get_wtime();
-  std::cout<<RED<<"[DEBUG]: Map sliding using "<<t_sliding_end - t_sliding_start<<" secs"<<RESET<<"\n";
+  ROS_INFO("[NX_MAP] sliding %.4fs, root_voxels=%zu", t_sliding_end - t_sliding_start, voxel_map_.size());
   return;
+}
+
+void VoxelMapManager::enforceRootVoxelLimit()
+{
+  const int cap_cfg = config_setting_.max_root_voxels;
+  if (cap_cfg <= 0) return;
+  const size_t cap = static_cast<size_t>(cap_cfg);
+  if (voxel_map_.size() <= cap) return;
+
+  // Trim to 90% of the cap so this relatively expensive operation is rare.
+  const size_t target = std::max<size_t>(1, cap * 9 / 10);
+  const size_t remove_count = voxel_map_.size() - target;
+
+  struct Candidate
+  {
+    double dist2;
+    VOXEL_LOCATION loc;
+  };
+  std::vector<Candidate> candidates;
+  candidates.reserve(voxel_map_.size());
+
+  const double vx = position_last_.x() / config_setting_.max_voxel_size_;
+  const double vy = position_last_.y() / config_setting_.max_voxel_size_;
+  const double vz = position_last_.z() / config_setting_.max_voxel_size_;
+
+  for (const auto &kv : voxel_map_)
+  {
+    const double dx = static_cast<double>(kv.first.x) - vx;
+    const double dy = static_cast<double>(kv.first.y) - vy;
+    const double dz = static_cast<double>(kv.first.z) - vz;
+    candidates.push_back({dx * dx + dy * dy + dz * dz, kv.first});
+  }
+
+  std::nth_element(candidates.begin(),
+                   candidates.begin() + static_cast<std::ptrdiff_t>(remove_count),
+                   candidates.end(),
+                   [](const Candidate &a, const Candidate &b) { return a.dist2 > b.dist2; });
+
+  size_t removed = 0;
+  for (size_t i = 0; i < remove_count; ++i)
+  {
+    auto it = voxel_map_.find(candidates[i].loc);
+    if (it == voxel_map_.end()) continue;
+    delete it->second;
+    voxel_map_.erase(it);
+    ++removed;
+  }
+
+  ROS_WARN("[NX_MAP] hard root-voxel cap triggered: removed=%zu remaining=%zu cap=%zu",
+           removed, voxel_map_.size(), cap);
 }
 
 void VoxelMapManager::clearMemOutOfMap(const int& x_max,const int& x_min,const int& y_max,const int& y_min,const int& z_max,const int& z_min )
@@ -966,6 +1030,7 @@ void VoxelMapManager::clearMemOutOfMap(const int& x_max,const int& x_min,const i
       ++it;
     }
   }
-  std::cout<<RED<<"[DEBUG]: Delete "<<delete_voxel_cout<<" root voxels"<<RESET<<"\n";
+  if (delete_voxel_cout > 0)
+    ROS_INFO("[NX_MAP] sliding deleted %d root voxels, remaining=%zu", delete_voxel_cout, voxel_map_.size());
   // std::cout<<RED<<"[DEBUG]: Delete "<<delete_voxel_cout<<" voxels using "<<delete_time<<" s"<<RESET<<"\n";
 }
