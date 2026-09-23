@@ -182,7 +182,6 @@ public:
 
   double viz_voxel_size = 0.25;
   int viz_publish_interval = 3;
-  std::unordered_map<VOXEL_LOCATION, BackgroundColorVoxel> background_color_voxels;
 
   std::thread watchdog_thread;
   std::atomic<bool> watchdog_stop{false};
