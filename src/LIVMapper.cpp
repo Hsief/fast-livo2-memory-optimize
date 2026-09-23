@@ -936,9 +936,23 @@ void LIVMapper::img_cbk(const sensor_msgs::ImageConstPtr &msg_in)
     return;
   }
 
-  // Directly convert the incoming message: avoid a full 1920x1080 ROS Image deep copy.
-  // Keep conversion outside mtx_buffer so LiDAR/IMU buffering is not blocked.
-  cv::Mat img_cur = getImageFromMsg(msg_in);
+  // Convert/resize before queueing. With camera scale=0.5 this stores 960x540
+  // instead of 1920x1080 in img_buffer. toCvShare also avoids an unnecessary
+  // full-resolution deep copy when the incoming encoding is already compatible.
+  cv_bridge::CvImageConstPtr cv_ptr = cv_bridge::toCvShare(msg_in, "bgr8");
+  cv::Mat img_cur;
+  const int target_width = (vio_manager && vio_manager->cam) ? vio_manager->cam->width() : cv_ptr->image.cols;
+  const int target_height = (vio_manager && vio_manager->cam) ? vio_manager->cam->height() : cv_ptr->image.rows;
+  if (target_width > 0 && target_height > 0 &&
+      (cv_ptr->image.cols != target_width || cv_ptr->image.rows != target_height))
+  {
+    cv::resize(cv_ptr->image, img_cur, cv::Size(target_width, target_height), 0, 0, cv::INTER_LINEAR);
+  }
+  else
+  {
+    // Queue storage must own its pixels after the ROS message leaves the callback.
+    img_cur = cv_ptr->image.clone();
+  }
 
   {
     std::lock_guard<std::mutex> lock(mtx_buffer);
