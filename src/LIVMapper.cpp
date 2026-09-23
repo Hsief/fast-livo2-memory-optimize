@@ -1231,6 +1231,7 @@ void LIVMapper::img_cbk(const sensor_msgs::ImageConstPtr &msg_in)
 
 bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
 {
+  std::lock_guard<std::mutex> sensor_lock(mtx_buffer);
   if (lid_raw_data_buffer.empty() && lidar_en) return false;
   if (img_buffer.empty() && img_en) return false;
   if (imu_buffer.empty() && imu_en) return false;
@@ -1264,7 +1265,6 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
 
     m.imu.clear();
     m.lio_time = meas.lidar_frame_end_time;
-    mtx_buffer.lock();
     while (!imu_buffer.empty())
     {
       if (imu_buffer.front()->header.stamp.toSec() > meas.lidar_frame_end_time) break;
@@ -1273,8 +1273,6 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
     }
     lid_raw_data_buffer.pop_front();
     lid_header_time_buffer.pop_front();
-    mtx_buffer.unlock();
-    sig_buffer.notify_all();
 
     meas.lio_vio_flg = LIO; // process lidar topic, so timestamp should be lidar scan end.
     meas.measures.push_back(m);
@@ -1332,8 +1330,7 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
       // printf("[ Data Cut ] img_capture_time: %lf \n", img_capture_time);
       m.imu.clear();
       m.lio_time = img_capture_time;
-      mtx_buffer.lock();
-      while (!imu_buffer.empty())
+        while (!imu_buffer.empty())
       {
         if (imu_buffer.front()->header.stamp.toSec() > m.lio_time) break;
 
@@ -1343,9 +1340,7 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
         // printf("[ Data Cut ] imu time: %lf \n",
         // imu_buffer.front()->header.stamp.toSec());
       }
-      mtx_buffer.unlock();
-      sig_buffer.notify_all();
-
+    
       *(meas.pcl_proc_cur) = *(meas.pcl_proc_next);
       PointCloudXYZI().swap(*meas.pcl_proc_next);
 
@@ -1402,8 +1397,7 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
       m.vio_time = img_capture_time;
       m.lio_time = meas.last_lio_update_time;
       m.img = img_buffer.front();
-      mtx_buffer.lock();
-      // while ((!imu_buffer.empty() && (imu_time < img_capture_time)))
+        // while ((!imu_buffer.empty() && (imu_time < img_capture_time)))
       // {
       //   imu_time = imu_buffer.front()->header.stamp.toSec();
       //   if (imu_time > img_capture_time) break;
@@ -1414,9 +1408,7 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
       // }
       img_buffer.pop_front();
       img_time_buffer.pop_front();
-      mtx_buffer.unlock();
-      sig_buffer.notify_all();
-      meas.measures.push_back(m);
+          meas.measures.push_back(m);
       lidar_pushed = false; // after VIO update, the _lidar_frame_end_time will be refresh.
       // printf("[ Data Cut ] VIO process time: %lf \n", omp_get_wtime() - t0);
       return true;
@@ -1445,11 +1437,8 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
     }
     struct MeasureGroup m; // standard method to keep imu message.
     m.lio_time = meas.lidar_frame_end_time;
-    mtx_buffer.lock();
     lid_raw_data_buffer.pop_front();
     lid_header_time_buffer.pop_front();
-    mtx_buffer.unlock();
-    sig_buffer.notify_all();
     lidar_pushed = false; // sync one whole lidar scan.
     meas.lio_vio_flg = LO; // process lidar topic, so timestamp should be lidar scan end.
     meas.measures.push_back(m);
