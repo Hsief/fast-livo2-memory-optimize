@@ -67,6 +67,8 @@ local_map:
   map_sliding_en: true
   half_map_size: 50
   sliding_thresh: 8
+  max_root_voxels: 180000   # emergency hard cap; trims farthest root voxels in batches
+  root_voxel_reserve: 60000 # avoid repeated unordered_map rehash spikes
 
 uav:
   imu_rate_odom: false
