@@ -513,19 +513,25 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
 void VoxelMapManager::TransformLidar(const Eigen::Matrix3d rot, const Eigen::Vector3d t, const PointCloudXYZI::Ptr &input_cloud,
                                      pcl::PointCloud<pcl::PointXYZI>::Ptr &trans_cloud)
 {
-  pcl::PointCloud<pcl::PointXYZI>().swap(*trans_cloud);
-  trans_cloud->reserve(input_cloud->size());
-  for (size_t i = 0; i < input_cloud->size(); i++)
+  const size_t n = input_cloud->size();
+  trans_cloud->points.resize(n);
+  trans_cloud->width = static_cast<uint32_t>(n);
+  trans_cloud->height = 1;
+  trans_cloud->is_dense = input_cloud->is_dense;
+#ifdef MP_EN
+  omp_set_num_threads(MP_PROC_NUM);
+#pragma omp parallel for
+#endif
+  for (int i = 0; i < static_cast<int>(n); ++i)
   {
-    pcl::PointXYZINormal p_c = input_cloud->points[i];
+    const pcl::PointXYZINormal &p_c = input_cloud->points[i];
     Eigen::Vector3d p(p_c.x, p_c.y, p_c.z);
-    p = (rot * (extR_ * p + extT_) + t);
-    pcl::PointXYZI pi;
+    p = rot * (extR_ * p + extT_) + t;
+    pcl::PointXYZI &pi = trans_cloud->points[i];
     pi.x = p(0);
     pi.y = p(1);
     pi.z = p(2);
     pi.intensity = p_c.intensity;
-    trans_cloud->points.push_back(pi);
   }
 }
 
@@ -645,21 +651,16 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
   int max_layer = config_setting_.max_layer_;
   double voxel_size = config_setting_.max_voxel_size_;
   double sigma_num = config_setting_.sigma_num_;
-  std::mutex mylock;
   ptpl_list.clear();
   std::vector<PointToPlane> all_ptpl_list(pv_list.size());
-  std::vector<bool> useful_ptpl(pv_list.size());
-  std::vector<size_t> index(pv_list.size());
-  for (size_t i = 0; i < index.size(); ++i)
-  {
-    index[i] = i;
-    useful_ptpl[i] = false;
-  }
+  // One byte per point: each OpenMP iteration owns index i, so there is no
+  // shared write and no mutex is required. Final ptpl order stays unchanged.
+  std::vector<uint8_t> useful_ptpl(pv_list.size(), 0);
   #ifdef MP_EN
     omp_set_num_threads(MP_PROC_NUM);
     #pragma omp parallel for
   #endif
-  for (int i = 0; i < index.size(); i++)
+  for (int i = 0; i < static_cast<int>(pv_list.size()); i++)
   {
     pointWithVar &pv = pv_list[i];
     float loc_xyz[3];
@@ -691,16 +692,8 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
       }
       if (is_sucess)
       {
-        mylock.lock();
-        useful_ptpl[i] = true;
+        useful_ptpl[i] = 1;
         all_ptpl_list[i] = single_ptpl;
-        mylock.unlock();
-      }
-      else
-      {
-        mylock.lock();
-        useful_ptpl[i] = false;
-        mylock.unlock();
       }
     }
   }
