@@ -124,6 +124,14 @@ public:
 
   double compute_jacobian_time, update_ekf_time;
   double ave_total = 0;
+  double last_retrieve_time = 0.0;
+  double last_ekf_stage_time = 0.0;
+  double last_generate_time = 0.0;
+  double last_update_map_time = 0.0;
+  double last_reference_time = 0.0;
+  double last_total_time = 0.0;
+  unsigned long long pruned_visual_voxels_total = 0;
+  unsigned long long pruned_visual_points_total = 0;
   // double ave_build_residual_time = 0;
   // double ave_ekf_time = 0;
 
