@@ -109,6 +109,7 @@ public:
   int max_iterations, total_points;
 
   // Bounded visual sparse map for embedded/long-running operation.
+  bool visual_map_prune_en = false;
   double visual_map_voxel_size = 0.5;
   int visual_map_half_size = 50;              // voxels; 50 * 0.5m = 25m half extent
   int visual_map_max_voxels = 40000;
