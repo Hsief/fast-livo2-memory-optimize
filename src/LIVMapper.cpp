@@ -501,54 +501,130 @@ void LIVMapper::handleLIO()
             << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose() << " " << feats_undistort->points.size() << std::endl;
 }
 
-void LIVMapper::savePCD() 
+void LIVMapper::startBackgroundPcdWriter()
 {
-  if (pcd_save_en && (pcl_wait_save->points.size() > 0 || pcl_wait_save_intensity->points.size() > 0) && pcd_save_interval < 0) 
+  std::lock_guard<std::mutex> lock(background_pcd_mutex);
+  if (background_pcd_started) return;
+  background_pcd_stop = false;
+  background_pcd_started = true;
+  background_pcd_thread = std::thread(&LIVMapper::backgroundPcdWriterLoop, this);
+}
+
+void LIVMapper::enqueueBackgroundPcd(const BackgroundPcdJob &job)
+{
+  if (!background_pcd_started) return;
   {
-    std::string raw_points_dir = std::string(ROOT_DIR) + "Log/pcd/all_raw_points.pcd";
-    std::string downsampled_points_dir = std::string(ROOT_DIR) + "Log/pcd/all_downsampled_points.pcd";
-    pcl::PCDWriter pcd_writer;
-
-    if (img_en)
+    std::lock_guard<std::mutex> lock(background_pcd_mutex);
+    if (background_pcd_jobs.size() >= background_pcd_max_jobs)
     {
-      pcl::PointCloud<pcl::PointXYZRGB>::Ptr downsampled_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
-      pcl::VoxelGrid<pcl::PointXYZRGB> voxel_filter;
-      voxel_filter.setInputCloud(pcl_wait_save);
-      voxel_filter.setLeafSize(filter_size_pcd, filter_size_pcd, filter_size_pcd);
-      voxel_filter.filter(*downsampled_cloud);
-  
-      pcd_writer.writeBinary(raw_points_dir, *pcl_wait_save); // Save the raw point cloud data
-      std::cout << GREEN << "Raw point cloud data saved to: " << raw_points_dir 
-                << " with point count: " << pcl_wait_save->points.size() << RESET << std::endl;
-      
-      pcd_writer.writeBinary(downsampled_points_dir, *downsampled_cloud); // Save the downsampled point cloud data
-      std::cout << GREEN << "Downsampled point cloud data saved to: " << downsampled_points_dir 
-                << " with point count after filtering: " << downsampled_cloud->points.size() << RESET << std::endl;
+      background_pcd_jobs.pop_front();
+      ++background_pcd_dropped_jobs;
+      ROS_WARN_THROTTLE(5.0,
+                        "[BG_PCD] writer queue full; dropped one background-only export chunk. "
+                        "SLAM estimation is unaffected.");
+    }
+    background_pcd_jobs.push_back(job);
+  }
+  background_pcd_cv.notify_one();
+}
 
-      if(colmap_output_en)
+void LIVMapper::backgroundPcdWriterLoop()
+{
+  while (true)
+  {
+    BackgroundPcdJob job;
+    {
+      std::unique_lock<std::mutex> lock(background_pcd_mutex);
+      background_pcd_cv.wait(lock, [this] {
+        return background_pcd_stop || !background_pcd_jobs.empty();
+      });
+
+      if (background_pcd_jobs.empty())
       {
-        fout_points << "# 3D point list with one line of data per point\n";
-        fout_points << "#  POINT_ID, X, Y, Z, R, G, B, ERROR\n";
-        for (size_t i = 0; i < downsampled_cloud->size(); ++i) 
-        {
-            const auto& point = downsampled_cloud->points[i];
-            fout_points << i << " "
-                        << std::fixed << std::setprecision(6)
-                        << point.x << " " << point.y << " " << point.z << " "
-                        << static_cast<int>(point.r) << " "
-                        << static_cast<int>(point.g) << " "
-                        << static_cast<int>(point.b) << " "
-                        << 0 << std::endl;
-        }
+        if (background_pcd_stop) break;
+        continue;
+      }
+
+      job = background_pcd_jobs.front();
+      background_pcd_jobs.pop_front();
+    }
+
+    try
+    {
+      pcl::PCDWriter writer;
+
+      if (job.rgb && !job.rgb->empty())
+      {
+        PointCloudXYZRGB::Ptr filtered(new PointCloudXYZRGB());
+        pcl::VoxelGrid<pcl::PointXYZRGB> voxel_filter;
+        voxel_filter.setInputCloud(job.rgb);
+        voxel_filter.setLeafSize(background_pcd_voxel_size,
+                                 background_pcd_voxel_size,
+                                 background_pcd_voxel_size);
+        voxel_filter.filter(*filtered);
+        writer.writeBinaryCompressed(job.path, *filtered);
+        ROS_INFO("[BG_PCD] saved compressed RGB chunk: raw=%zu filtered=%zu voxel=%.2fm file=%s",
+                 job.rgb->size(), filtered->size(), background_pcd_voxel_size, job.path.c_str());
+      }
+      else if (job.intensity && !job.intensity->empty())
+      {
+        PointCloudXYZI::Ptr filtered(new PointCloudXYZI());
+        pcl::VoxelGrid<PointType> voxel_filter;
+        voxel_filter.setInputCloud(job.intensity);
+        voxel_filter.setLeafSize(background_pcd_voxel_size,
+                                 background_pcd_voxel_size,
+                                 background_pcd_voxel_size);
+        voxel_filter.filter(*filtered);
+        writer.writeBinaryCompressed(job.path, *filtered);
+        ROS_INFO("[BG_PCD] saved compressed intensity chunk: raw=%zu filtered=%zu voxel=%.2fm file=%s",
+                 job.intensity->size(), filtered->size(), background_pcd_voxel_size, job.path.c_str());
       }
     }
-    else
-    {      
-      pcd_writer.writeBinary(raw_points_dir, *pcl_wait_save_intensity);
-      std::cout << GREEN << "Raw point cloud data saved to: " << raw_points_dir 
-                << " with point count: " << pcl_wait_save_intensity->points.size() << RESET << std::endl;
+    catch (const std::exception &e)
+    {
+      ROS_ERROR("[BG_PCD] background export failed: %s. SLAM continues.", e.what());
     }
   }
+}
+
+void LIVMapper::stopBackgroundPcdWriter()
+{
+  {
+    std::lock_guard<std::mutex> lock(background_pcd_mutex);
+    if (!background_pcd_started) return;
+    background_pcd_stop = true;
+  }
+  background_pcd_cv.notify_all();
+  if (background_pcd_thread.joinable()) background_pcd_thread.join();
+  background_pcd_started = false;
+}
+
+void LIVMapper::savePCD()
+{
+  if (!pcd_save_en) return;
+
+  if (!pcl_wait_save->empty() || !pcl_wait_save_intensity->empty())
+  {
+    BackgroundPcdJob job;
+    job.path = std::string(ROOT_DIR) + "Log/pcd/background_final.pcd";
+
+    if (!pcl_wait_save->empty())
+    {
+      job.rgb = pcl_wait_save;
+      pcl_wait_save.reset(new PointCloudXYZRGB());
+    }
+    else
+    {
+      job.intensity = pcl_wait_save_intensity;
+      pcl_wait_save_intensity.reset(new PointCloudXYZI());
+    }
+
+    enqueueBackgroundPcd(job);
+  }
+
+  // Shutdown may wait for pending background-only exports. Runtime estimation
+  // never waits for disk I/O.
+  stopBackgroundPcdWriter();
 }
 
 void LIVMapper::run() 
