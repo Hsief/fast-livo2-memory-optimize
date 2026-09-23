@@ -210,6 +210,8 @@ public:
   float ave_build_residual_time = 0.0;
   float ave_ekf_time = 0.0;
   int scan_count = 0;
+  unsigned long long pruned_root_voxels_total = 0;
+  unsigned long long hardcap_root_voxels_total = 0;
   StatesGroup state_;
   V3D position_last_;
 
