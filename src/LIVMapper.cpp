@@ -898,37 +898,16 @@ void LIVMapper::savePCD()
   stopBackgroundPcdWriter();
 }
 
-void LIVMapper::run() 
+void LIVMapper::run()
 {
   ros::Rate rate(5000);
-  ros::CallbackQueue *callback_queue = ros::getGlobalCallbackQueue();
-  constexpr int kMaxCallbacksPerCycle = 64;
-  constexpr double kCallbackBudgetSec = 0.030;
 
-  while (ros::ok()) 
+  while (ros::ok())
   {
-    // Process a bounded batch of callbacks, then always give the estimator a
-    // chance to run. This preserves FIFO order and every sensor message, while
-    // avoiding both extremes:
-    //   spinOnce() -> callback backlog can monopolize the main thread;
-    //   callOne()  -> estimator work can starve ROS callback consumption.
-    watchdog_phase.store(1);  // CALLBACK
-    const double callback_t0 = omp_get_wtime();
-    int callback_count = 0;
-    while (callback_count < kMaxCallbacksPerCycle &&
-           (omp_get_wtime() - callback_t0) < kCallbackBudgetSec)
-    {
-      const ros::CallbackQueue::CallOneResult result =
-          callback_queue->callOne(ros::WallDuration(0.0));
-      if (result == ros::CallbackQueue::Empty ||
-          result == ros::CallbackQueue::Disabled)
-        break;
-      ++callback_count;
-    }
-    watchdog_callbacks_last_cycle.store(callback_count);
+    watchdog_callbacks_last_cycle.store(0);
 
     watchdog_phase.store(2);  // SYNC
-    if (!sync_packages(LidarMeasures)) 
+    if (!sync_packages(LidarMeasures))
     {
       watchdog_phase.store(0);  // IDLE
       rate.sleep();
@@ -940,8 +919,6 @@ void LIVMapper::run()
 
     watchdog_phase.store(4);  // IMU
     processImu();
-
-    // if (!p_imu->imu_time_init) continue;
 
     watchdog_phase.store(5);  // ESTIMATION
     stateEstimationAndMapping();
