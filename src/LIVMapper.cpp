@@ -563,8 +563,25 @@ void LIVMapper::backgroundPcdWriterLoop()
                                  background_pcd_voxel_size);
         voxel_filter.filter(*filtered);
         writer.writeBinaryCompressed(job.path, *filtered);
-        ROS_INFO("[BG_PCD] saved compressed RGB chunk: raw=%zu filtered=%zu voxel=%.2fm file=%s",
-                 job.rgb->size(), filtered->size(), background_pcd_voxel_size, job.path.c_str());
+
+        for (const auto &p : filtered->points)
+        {
+          const int64_t vx = static_cast<int64_t>(std::floor(p.x / background_pcd_voxel_size));
+          const int64_t vy = static_cast<int64_t>(std::floor(p.y / background_pcd_voxel_size));
+          const int64_t vz = static_cast<int64_t>(std::floor(p.z / background_pcd_voxel_size));
+          BackgroundColorVoxel &v = background_color_voxels[VOXEL_LOCATION(vx, vy, vz)];
+          v.sx += p.x;
+          v.sy += p.y;
+          v.sz += p.z;
+          v.sr += p.r;
+          v.sg += p.g;
+          v.sb += p.b;
+          ++v.count;
+        }
+
+        ROS_INFO("[BG_PCD] saved compressed RGB chunk: raw=%zu filtered=%zu global_voxels=%zu voxel=%.2fm file=%s",
+                 job.rgb->size(), filtered->size(), background_color_voxels.size(),
+                 background_pcd_voxel_size, job.path.c_str());
       }
       else if (job.intensity && !job.intensity->empty())
       {
@@ -600,6 +617,45 @@ void LIVMapper::backgroundPcdWriterLoop()
     catch (const std::exception &e)
     {
       ROS_ERROR("[BG_PCD] background export failed: %s. SLAM continues.", e.what());
+    }
+  }
+
+  if (!background_color_voxels.empty())
+  {
+    try
+    {
+      PointCloudXYZRGB::Ptr final_map(new PointCloudXYZRGB());
+      final_map->points.reserve(background_color_voxels.size());
+
+      for (const auto &kv : background_color_voxels)
+      {
+        const BackgroundColorVoxel &v = kv.second;
+        if (v.count == 0) continue;
+
+        pcl::PointXYZRGB p;
+        const double inv = 1.0 / static_cast<double>(v.count);
+        p.x = static_cast<float>(v.sx * inv);
+        p.y = static_cast<float>(v.sy * inv);
+        p.z = static_cast<float>(v.sz * inv);
+        p.r = static_cast<uint8_t>(v.sr / v.count);
+        p.g = static_cast<uint8_t>(v.sg / v.count);
+        p.b = static_cast<uint8_t>(v.sb / v.count);
+        final_map->points.push_back(p);
+      }
+
+      final_map->width = static_cast<uint32_t>(final_map->points.size());
+      final_map->height = 1;
+      final_map->is_dense = true;
+
+      const std::string final_path = std::string(ROOT_DIR) + "Log/pcd/background_map.pcd";
+      pcl::PCDWriter writer;
+      writer.writeBinaryCompressed(final_path, *final_map);
+      ROS_INFO("[BG_PCD] final colored background map saved: points=%zu voxel=%.2fm file=%s",
+               final_map->size(), background_pcd_voxel_size, final_path.c_str());
+    }
+    catch (const std::exception &e)
+    {
+      ROS_ERROR("[BG_PCD] final colored map export failed: %s", e.what());
     }
   }
 }
