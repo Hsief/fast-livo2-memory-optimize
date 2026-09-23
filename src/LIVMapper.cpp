@@ -952,149 +952,118 @@ void LIVMapper::RGBpointBodyLidarToIMU(PointType const *const pi, PointType *con
 void LIVMapper::standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
 {
   if (!lidar_en) return;
-  const double cur_head_time = msg->header.stamp.toSec() + lidar_time_offset;
+  mtx_buffer.lock();
 
+  double cur_head_time = msg->header.stamp.toSec() + lidar_time_offset;
+  // cout<<"got feature"<<endl;
+  if (cur_head_time < last_timestamp_lidar)
+  {
+    ROS_ERROR("lidar loop back, clear buffer");
+    lid_raw_data_buffer.clear();
+  }
+  // ROS_INFO("get point cloud at time: %.6f", msg->header.stamp.toSec());
   PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
-  p_pre->process(msg, ptr);  // expensive work outside mtx_buffer
-  if (!ptr || ptr->empty())
-  {
-    ROS_WARN_THROTTLE(1.0, "Received an empty standard point cloud");
-    return;
-  }
+  p_pre->process(msg, ptr);
+  lid_raw_data_buffer.push_back(ptr);
+  lid_header_time_buffer.push_back(cur_head_time);
+  last_timestamp_lidar = cur_head_time;
 
-  {
-    std::lock_guard<std::mutex> lock(mtx_buffer);
-    if (cur_head_time < last_timestamp_lidar)
-    {
-      ROS_ERROR("lidar loop back, clear buffer");
-      lid_raw_data_buffer.clear();
-      lid_header_time_buffer.clear();
-      lidar_pushed = false;
-    }
-
-    if (lid_raw_data_buffer.size() >= max_lidar_buffer_size && lidar_pushed)
-    {
-      ++dropped_lidar_frames;
-      return;
-    }
-    while (lid_raw_data_buffer.size() >= max_lidar_buffer_size)
-    {
-      lid_raw_data_buffer.pop_front();
-      lid_header_time_buffer.pop_front();
-      ++dropped_lidar_frames;
-    }
-
-    lid_raw_data_buffer.push_back(ptr);
-    lid_header_time_buffer.push_back(cur_head_time);
-    last_timestamp_lidar = cur_head_time;
-  }
+  mtx_buffer.unlock();
   sig_buffer.notify_all();
 }
 
 void LIVMapper::livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg_in)
 {
   if (!lidar_en) return;
-  const double cur_head_time = msg_in->header.stamp.toSec();
-
-  PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
-  // Preprocess accepts ConstPtr, so do not deep-copy the entire Livox CustomMsg.
-  p_pre->process(msg_in, ptr);
-  if (!ptr || ptr->empty())
+  mtx_buffer.lock();
+  livox_ros_driver::CustomMsg::Ptr msg(new livox_ros_driver::CustomMsg(*msg_in));
+  // if ((abs(msg->header.stamp.toSec() - last_timestamp_lidar) > 0.2 && last_timestamp_lidar > 0) || sync_jump_flag)
+  // {
+  //   ROS_WARN("lidar jumps %.3f\n", msg->header.stamp.toSec() - last_timestamp_lidar);
+  //   sync_jump_flag = true;
+  //   msg->header.stamp = ros::Time().fromSec(last_timestamp_lidar + 0.1);
+  // }
+  if (abs(last_timestamp_imu - msg->header.stamp.toSec()) > 1.0 && !imu_buffer.empty())
   {
-    ROS_WARN_THROTTLE(1.0, "Received an empty Livox point cloud");
+    double timediff_imu_wrt_lidar = last_timestamp_imu - msg->header.stamp.toSec();
+    printf("\033[95mSelf sync IMU and LiDAR, HARD time lag is %.10lf \n\033[0m", timediff_imu_wrt_lidar - 0.100);
+    // imu_time_offset = timediff_imu_wrt_lidar;
+  }
+
+  double cur_head_time = msg->header.stamp.toSec();
+  ROS_INFO("Get LiDAR, its header time: %.6f", cur_head_time);
+  if (cur_head_time < last_timestamp_lidar)
+  {
+    ROS_ERROR("lidar loop back, clear buffer");
+    lid_raw_data_buffer.clear();
+  }
+  // ROS_INFO("get point cloud at time: %.6f", msg->header.stamp.toSec());
+  PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
+  p_pre->process(msg, ptr);
+
+  if (!ptr || ptr->empty()) {
+    ROS_ERROR("Received an empty point cloud");
+    mtx_buffer.unlock();
     return;
   }
 
-  {
-    std::lock_guard<std::mutex> lock(mtx_buffer);
+  lid_raw_data_buffer.push_back(ptr);
+  lid_header_time_buffer.push_back(cur_head_time);
+  last_timestamp_lidar = cur_head_time;
 
-    if (abs(last_timestamp_imu - cur_head_time) > 1.0 && !imu_buffer.empty())
-    {
-      const double timediff_imu_wrt_lidar = last_timestamp_imu - cur_head_time;
-      ROS_WARN_THROTTLE(2.0, "Self sync IMU/LiDAR lag: %.6f s", timediff_imu_wrt_lidar - 0.100);
-    }
-
-    if (cur_head_time < last_timestamp_lidar)
-    {
-      ROS_ERROR("lidar loop back, clear buffer");
-      lid_raw_data_buffer.clear();
-      lid_header_time_buffer.clear();
-      lidar_pushed = false;
-    }
-
-    if (lid_raw_data_buffer.size() >= max_lidar_buffer_size && lidar_pushed)
-    {
-      ++dropped_lidar_frames;
-      return;
-    }
-    while (lid_raw_data_buffer.size() >= max_lidar_buffer_size)
-    {
-      lid_raw_data_buffer.pop_front();
-      lid_header_time_buffer.pop_front();
-      ++dropped_lidar_frames;
-    }
-
-    lid_raw_data_buffer.push_back(ptr);
-    lid_header_time_buffer.push_back(cur_head_time);
-    last_timestamp_lidar = cur_head_time;
-  }
-
+  mtx_buffer.unlock();
   sig_buffer.notify_all();
 }
 
 void LIVMapper::imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
 {
   if (!imu_en) return;
-  if (last_timestamp_lidar < 0.0) return;
 
-  // Keep one small IMU copy because the timestamp may be corrected locally.
+  if (last_timestamp_lidar < 0.0) return;
+  // ROS_INFO("get imu at time: %.6f", msg_in->header.stamp.toSec());
   sensor_msgs::Imu::Ptr msg(new sensor_msgs::Imu(*msg_in));
   msg->header.stamp = ros::Time().fromSec(msg->header.stamp.toSec() - imu_time_offset);
   double timestamp = msg->header.stamp.toSec();
 
   if (fabs(last_timestamp_lidar - timestamp) > 0.5 && (!ros_driver_fix_en))
   {
-    ROS_WARN_THROTTLE(1.0, "IMU and LiDAR not synced! delta time: %lf", last_timestamp_lidar - timestamp);
+    ROS_WARN("IMU and LiDAR not synced! delta time: %lf .\n", last_timestamp_lidar - timestamp);
   }
 
   if (ros_driver_fix_en) timestamp += std::round(last_timestamp_lidar - timestamp);
   msg->header.stamp = ros::Time().fromSec(timestamp);
 
+  mtx_buffer.lock();
+
+  if (last_timestamp_imu > 0.0 && timestamp < last_timestamp_imu)
   {
-    std::lock_guard<std::mutex> lock(mtx_buffer);
-
-    if (last_timestamp_imu > 0.0 && timestamp < last_timestamp_imu)
-    {
-      ROS_ERROR("imu loop back, offset: %lf", last_timestamp_imu - timestamp);
-      return;
-    }
-
-    last_timestamp_imu = timestamp;
-    imu_buffer.push_back(msg);
-
-    // Remove only IMUs already older than the oldest queued LiDAR frame.
-    if (!lid_header_time_buffer.empty())
-    {
-      const double oldest_needed_lidar_time = lid_header_time_buffer.front() - 0.05;
-      while (imu_buffer.size() > max_imu_buffer_size &&
-             imu_buffer.front()->header.stamp.toSec() < oldest_needed_lidar_time)
-      {
-        imu_buffer.pop_front();
-        ++dropped_imu_messages;
-      }
-    }
+    mtx_buffer.unlock();
+    sig_buffer.notify_all();
+    ROS_ERROR("imu loop back, offset: %lf \n", last_timestamp_imu - timestamp);
+    return;
   }
 
+  // if (last_timestamp_imu > 0.0 && timestamp > last_timestamp_imu + 0.2)
+  // {
+
+  //   ROS_WARN("imu time stamp Jumps %0.4lf seconds \n", timestamp - last_timestamp_imu);
+  //   mtx_buffer.unlock();
+  //   sig_buffer.notify_all();
+  //   return;
+  // }
+
+  last_timestamp_imu = timestamp;
+
+  imu_buffer.push_back(msg);
+  // cout<<"got imu: "<<timestamp<<" imu size "<<imu_buffer.size()<<endl;
+  mtx_buffer.unlock();
   if (imu_prop_enable)
   {
-    std::lock_guard<std::mutex> lock(mtx_buffer_imu_prop);
-    if (!p_imu->imu_need_init)
-    {
-      prop_imu_buffer.push_back(*msg);
-      while (prop_imu_buffer.size() > max_prop_imu_buffer_size) prop_imu_buffer.pop_front();
-    }
+    mtx_buffer_imu_prop.lock();
+    if (imu_prop_enable && !p_imu->imu_need_init) { prop_imu_buffer.push_back(*msg); }
     newest_imu = *msg;
     new_imu = true;
+    mtx_buffer_imu_prop.unlock();
   }
   sig_buffer.notify_all();
 }
@@ -1109,67 +1078,55 @@ cv::Mat LIVMapper::getImageFromMsg(const sensor_msgs::ImageConstPtr &img_msg)
 void LIVMapper::img_cbk(const sensor_msgs::ImageConstPtr &msg_in)
 {
   if (!img_en) return;
+  sensor_msgs::Image::Ptr msg(new sensor_msgs::Image(*msg_in));
+  // if ((abs(msg->header.stamp.toSec() - last_timestamp_img) > 0.2 && last_timestamp_img > 0) || sync_jump_flag)
+  // {
+  //   ROS_WARN("img jumps %.3f\n", msg->header.stamp.toSec() - last_timestamp_img);
+  //   sync_jump_flag = true;
+  //   msg->header.stamp = ros::Time().fromSec(last_timestamp_img + 0.1);
+  // }
 
+  // Hiliti2022 40Hz
   if (hilti_en)
   {
     static int frame_counter = 0;
     if (++frame_counter % 4 != 0) return;
   }
-
-  const double msg_header_time = msg_in->header.stamp.toSec() + img_time_offset;
+  // double msg_header_time =  msg->header.stamp.toSec();
+  double msg_header_time = msg->header.stamp.toSec() + img_time_offset;
   if (abs(msg_header_time - last_timestamp_img) < 0.001) return;
+  ROS_INFO("Get image, its header time: %.6f", msg_header_time);
   if (last_timestamp_lidar < 0) return;
+
   if (msg_header_time < last_timestamp_img)
   {
-    ROS_ERROR("image loop back.");
-    return;
-  }
-  if (msg_header_time - last_timestamp_img < 0.02)
-  {
-    ROS_WARN_THROTTLE(1.0, "Image frame skipped due to tiny timestamp gap: %.6f", msg_header_time);
+    ROS_ERROR("image loop back. \n");
     return;
   }
 
-  // Convert/resize before queueing. With camera scale=0.5 this stores 960x540
-  // instead of 1920x1080 in img_buffer. toCvShare also avoids an unnecessary
-  // full-resolution deep copy when the incoming encoding is already compatible.
-  cv_bridge::CvImageConstPtr cv_ptr = cv_bridge::toCvShare(msg_in, "bgr8");
-  cv::Mat img_cur;
-  const int target_width = (vio_manager && vio_manager->cam) ? vio_manager->cam->width() : cv_ptr->image.cols;
-  const int target_height = (vio_manager && vio_manager->cam) ? vio_manager->cam->height() : cv_ptr->image.rows;
-  if (target_width > 0 && target_height > 0 &&
-      (cv_ptr->image.cols != target_width || cv_ptr->image.rows != target_height))
+  mtx_buffer.lock();
+
+  double img_time_correct = msg_header_time; // last_timestamp_lidar + 0.105;
+
+  if (img_time_correct - last_timestamp_img < 0.02)
   {
-    cv::resize(cv_ptr->image, img_cur, cv::Size(target_width, target_height), 0, 0, cv::INTER_LINEAR);
-  }
-  else
-  {
-    // Queue storage must own its pixels after the ROS message leaves the callback.
-    img_cur = cv_ptr->image.clone();
+    ROS_WARN("Image need Jumps: %.6f", img_time_correct);
+    mtx_buffer.unlock();
+    sig_buffer.notify_all();
+    return;
   }
 
-  {
-    std::lock_guard<std::mutex> lock(mtx_buffer);
+  cv::Mat img_cur = getImageFromMsg(msg);
+  img_buffer.push_back(img_cur);
+  img_time_buffer.push_back(img_time_correct);
 
-    // During LIO->VIO handoff img_buffer.front() is already the selected image.
-    // Preserve it and discard the newest image if the queue is full.
-    if (img_buffer.size() >= max_image_buffer_size && LidarMeasures.lio_vio_flg == LIO)
-    {
-      ++dropped_image_frames;
-      return;
-    }
+  // ROS_INFO("Correct Image time: %.6f", img_time_correct);
 
-    while (img_buffer.size() >= max_image_buffer_size)
-    {
-      img_buffer.pop_front();
-      img_time_buffer.pop_front();
-      ++dropped_image_frames;
-    }
-
-    img_buffer.push_back(img_cur);
-    img_time_buffer.push_back(msg_header_time);
-    last_timestamp_img = msg_header_time;
-  }
+  last_timestamp_img = img_time_correct;
+  // cv::imshow("img", img);
+  // cv::waitKey(1);
+  // cout<<"last_timestamp_img:::"<<last_timestamp_img<<endl;
+  mtx_buffer.unlock();
   sig_buffer.notify_all();
 }
 
