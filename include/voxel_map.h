@@ -14,6 +14,7 @@ which is included as part of this source code package.
 #define VOXEL_MAP_H_
 
 #include "common_lib.h"
+#include <algorithm>
 #include <Eigen/Dense>
 #include <fstream>
 #include <math.h>
