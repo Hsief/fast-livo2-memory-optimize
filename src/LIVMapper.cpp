@@ -235,14 +235,14 @@ void LIVMapper::initializeSubscribersAndPublishers(ros::NodeHandle &nh, image_tr
   pubPath = nh.advertise<nav_msgs::Path>("/fast_livo2/path", 1);
   plane_pub = nh.advertise<visualization_msgs::Marker>("/fast_livo2/planner_normal", 1);
   voxel_pub = nh.advertise<visualization_msgs::MarkerArray>("/fast_livo2/voxels", 1);
-  pubLaserCloudDyn = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/dyn_obj", 100);
-  pubLaserCloudDynRmed = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/dyn_obj_removed", 100);
-  pubLaserCloudDynDbg = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/dyn_obj_dbg_hist", 100);
-  mavros_pose_publisher = nh.advertise<geometry_msgs::PoseStamped>("/fast_livo2/mavros/vision_pose/pose", 10);
+  pubLaserCloudDyn = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/dyn_obj", 1);
+  pubLaserCloudDynRmed = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/dyn_obj_removed", 1);
+  pubLaserCloudDynDbg = nh.advertise<sensor_msgs::PointCloud2>("/fast_livo2/dyn_obj_dbg_hist", 1);
+  mavros_pose_publisher = nh.advertise<geometry_msgs::PoseStamped>("/fast_livo2/mavros/vision_pose/pose", 5);
   pubImage = it.advertise("/rgb_img", 1);
-  pubImuPropOdom = nh.advertise<nav_msgs::Odometry>("/fast_livo2/imu_propagate", 10000);
+  pubImuPropOdom = nh.advertise<nav_msgs::Odometry>("/fast_livo2/imu_propagate", 5);
   imu_prop_timer = nh.createTimer(ros::Duration(0.004), &LIVMapper::imu_prop_callback, this);
-  voxelmap_manager->voxel_map_pub_= nh.advertise<visualization_msgs::MarkerArray>("/fast_livo2/planes", 10000);
+  voxelmap_manager->voxel_map_pub_= nh.advertise<visualization_msgs::MarkerArray>("/fast_livo2/planes", 1);
 }
 
 void LIVMapper::handleFirstFrame() 
@@ -1703,9 +1703,20 @@ void LIVMapper::publish_mavros(const ros::Publisher &mavros_pose_publisher)
 
 void LIVMapper::publish_path(const ros::Publisher pubPath)
 {
+  if (pubPath.getNumSubscribers() == 0) return;
+
   set_posestamp(msg_body_pose.pose);
   msg_body_pose.header.stamp = ros::Time::now();
   msg_body_pose.header.frame_id = "camera_init";
   path.poses.push_back(msg_body_pose);
+
+  // Visualization history only; odometry/mapping state is unaffected.
+  constexpr size_t kMaxPathPoses = 2000;
+  if (path.poses.size() > kMaxPathPoses)
+  {
+    const size_t erase_count = path.poses.size() - kMaxPathPoses;
+    path.poses.erase(path.poses.begin(), path.poses.begin() + erase_count);
+  }
+
   pubPath.publish(path);
 }
