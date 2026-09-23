@@ -1012,6 +1012,8 @@ void VoxelMapManager::enforceRootVoxelLimit()
     ++removed;
   }
 
+  pruned_root_voxels_total += removed;
+  hardcap_root_voxels_total += removed;
   ROS_WARN("[NX_MAP] hard root-voxel cap triggered: removed=%zu remaining=%zu cap=%zu",
            removed, voxel_map_.size(), cap);
 }
@@ -1036,6 +1038,9 @@ void VoxelMapManager::clearMemOutOfMap(const int& x_max,const int& x_min,const i
     }
   }
   if (delete_voxel_cout > 0)
+  {
+    pruned_root_voxels_total += static_cast<unsigned long long>(delete_voxel_cout);
     ROS_INFO("[NX_MAP] sliding deleted %d root voxels, remaining=%zu", delete_voxel_cout, voxel_map_.size());
+  }
   // std::cout<<RED<<"[DEBUG]: Delete "<<delete_voxel_cout<<" voxels using "<<delete_time<<" s"<<RESET<<"\n";
 }
