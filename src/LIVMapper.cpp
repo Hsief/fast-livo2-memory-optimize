@@ -12,6 +12,8 @@ which is included as part of this source code package.
 
 #include "LIVMapper.h"
 #include <sys/stat.h>
+#include <sys/resource.h>
+#include <ros/callback_queue.h>
 
 LIVMapper::LIVMapper(ros::NodeHandle &nh)
     : extT(0, 0, 0),
@@ -530,6 +532,10 @@ void LIVMapper::enqueueBackgroundPcd(const BackgroundPcdJob &job)
 
 void LIVMapper::backgroundPcdWriterLoop()
 {
+  // Background export must never compete aggressively with the estimator.
+  // On Linux nice is per-thread, so this only lowers the PCD worker priority.
+  ::setpriority(PRIO_PROCESS, 0, 10);
+
   while (true)
   {
     BackgroundPcdJob job;
@@ -704,9 +710,16 @@ void LIVMapper::savePCD()
 void LIVMapper::run() 
 {
   ros::Rate rate(5000);
+  ros::CallbackQueue *callback_queue = ros::getGlobalCallbackQueue();
+
   while (ros::ok()) 
   {
-    ros::spinOnce();
+    // ros::spinOnce() drains all currently queued callbacks. When sensor input
+    // outruns the estimator this can starve sync_packages()/LIO/VIO forever.
+    // callOne() preserves every callback and FIFO ordering, but gives the
+    // estimator a chance to run between callbacks. No sensor frame is dropped.
+    callback_queue->callOne(ros::WallDuration(0.0));
+
     if (!sync_packages(LidarMeasures)) 
     {
       rate.sleep();
@@ -912,7 +925,7 @@ void LIVMapper::livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg_i
   }
 
   double cur_head_time = msg->header.stamp.toSec();
-  ROS_INFO("Get LiDAR, its header time: %.6f", cur_head_time);
+  ROS_DEBUG("Get LiDAR, its header time: %.6f", cur_head_time);
   if (cur_head_time < last_timestamp_lidar)
   {
     ROS_ERROR("lidar loop back, clear buffer");
@@ -1016,7 +1029,7 @@ void LIVMapper::img_cbk(const sensor_msgs::ImageConstPtr &msg_in)
   // double msg_header_time =  msg->header.stamp.toSec();
   double msg_header_time = msg->header.stamp.toSec() + img_time_offset;
   if (abs(msg_header_time - last_timestamp_img) < 0.001) return;
-  ROS_INFO("Get image, its header time: %.6f", msg_header_time);
+  ROS_DEBUG("Get image, its header time: %.6f", msg_header_time);
   if (last_timestamp_lidar < 0) return;
 
   if (msg_header_time < last_timestamp_img)
