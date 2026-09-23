@@ -47,7 +47,7 @@ public:
     PointCloudXYZI::Ptr intensity;
   };
 
-  static constexpr int BACKGROUND_VOXEL_CAPACITY = 10;
+  enum { BACKGROUND_VOXEL_CAPACITY = 10 };
 
   struct BackgroundColorVoxel
   {
