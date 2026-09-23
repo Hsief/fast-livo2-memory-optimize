@@ -96,9 +96,9 @@ public:
 
   // Jetson/Xavier bounded-runtime controls. Real-time SLAM must never allow
   // ROS queues, internal sensor buffers, or RViz path history to grow forever.
-  int lidar_sub_queue_size = 4;
-  int imu_sub_queue_size = 800;
-  int image_sub_queue_size = 3;
+  int lidar_sub_queue_size = 200000;
+  int imu_sub_queue_size = 200000;
+  int image_sub_queue_size = 200000;
   size_t max_lidar_buffer_size = 4;
   size_t max_image_buffer_size = 3;
   size_t max_imu_buffer_size = 1600;
@@ -120,6 +120,7 @@ public:
   double viz_voxel_size = 0.25;
   int viz_publish_interval = 1;
 
+  bool visual_map_prune_en = false;
   double visual_map_voxel_size = 0.5;
   int visual_map_half_size = 50;
   int visual_map_max_voxels = 40000;
