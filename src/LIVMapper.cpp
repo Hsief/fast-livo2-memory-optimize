@@ -1327,32 +1327,42 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
           scan_wait_num++;
           cout << "save body frame points: " << pcl_wait_save_intensity->points.size() << endl;
         }
-        pcd_save_interval = 1;
-        
+        break;
+
+      case 2: /** world-frame XYZ + intensity background map **/
+        if (LidarMeasures.lio_vio_flg == LIO || LidarMeasures.lio_vio_flg == LO)
+        {
+          *pcl_wait_save_intensity += *pcl_w_wait_pub;
+          scan_wait_num++;
+        }
         break;
 
       default:
-        pcd_save_interval = 1;
-        scan_wait_num++;
         break;
     }
-    if ((pcl_wait_save->size() > 0 || pcl_wait_save_intensity->size() > 0) && pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
+    if ((!pcl_wait_save->empty() || !pcl_wait_save_intensity->empty()) &&
+        pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
     {
-      string all_points_dir(string(string(ROOT_DIR) + "Log/pcd/") + ss_time.str() + string(".pcd"));
+      const std::string base_path = std::string(ROOT_DIR) + "Log/pcd/" + ss_time.str();
 
-      pcl::PCDWriter pcd_writer;
+      if (!pcl_wait_save->empty())
+      {
+        BackgroundPcdJob job;
+        job.path = base_path + "_rgb.pcd";
+        job.rgb = pcl_wait_save;
+        pcl_wait_save.reset(new PointCloudXYZRGB());
+        enqueueBackgroundPcd(job);
+      }
 
-      cout << "current scan saved to " << all_points_dir << endl;
-      if (pcl_wait_save->points.size() > 0)
+      if (!pcl_wait_save_intensity->empty())
       {
-        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save); // pcl::io::savePCDFileASCII(all_points_dir, *pcl_wait_save);
-        PointCloudXYZRGB().swap(*pcl_wait_save);
+        BackgroundPcdJob job;
+        job.path = base_path + "_background.pcd";
+        job.intensity = pcl_wait_save_intensity;
+        pcl_wait_save_intensity.reset(new PointCloudXYZI());
+        enqueueBackgroundPcd(job);
       }
-      if(pcl_wait_save_intensity->points.size() > 0)
-      {
-        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_intensity);
-        PointCloudXYZI().swap(*pcl_wait_save_intensity);
-      }
+
       scan_wait_num = 0;
     }
     
