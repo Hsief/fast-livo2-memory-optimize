@@ -127,9 +127,9 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   viz_voxel_size = std::max(0.0, viz_voxel_size);
   viz_publish_interval = std::max(1, viz_publish_interval);
 
-  nh.param<int>("runtime/lidar_sub_queue_size", lidar_sub_queue_size, 4);
-  nh.param<int>("runtime/imu_sub_queue_size", imu_sub_queue_size, 800);
-  nh.param<int>("runtime/image_sub_queue_size", image_sub_queue_size, 3);
+  nh.param<int>("runtime/lidar_sub_queue_size", lidar_sub_queue_size, 200000);
+  nh.param<int>("runtime/imu_sub_queue_size", imu_sub_queue_size, 200000);
+  nh.param<int>("runtime/image_sub_queue_size", image_sub_queue_size, 200000);
   int max_lidar_buffer_cfg = static_cast<int>(max_lidar_buffer_size);
   int max_image_buffer_cfg = static_cast<int>(max_image_buffer_size);
   int max_imu_buffer_cfg = static_cast<int>(max_imu_buffer_size);
@@ -146,11 +146,12 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<int>("runtime/log_flush_interval", runtime_log_flush_interval, 1);
   runtime_log_flush_interval = std::max(1, runtime_log_flush_interval);
 
+  nh.param<bool>("vio/visual_map_prune_en", visual_map_prune_en, false);
   nh.param<double>("vio/visual_map_voxel_size", visual_map_voxel_size, 0.5);
-  nh.param<int>("vio/visual_map_half_size", visual_map_half_size, 50);
-  nh.param<int>("vio/visual_map_max_voxels", visual_map_max_voxels, 40000);
-  nh.param<int>("vio/visual_map_max_points_per_voxel", visual_map_max_points_per_voxel, 8);
-  nh.param<int>("vio/visual_map_max_ref_age_frames", visual_map_max_ref_age_frames, 200);
+  nh.param<int>("vio/visual_map_half_size", visual_map_half_size, 0);
+  nh.param<int>("vio/visual_map_max_voxels", visual_map_max_voxels, 0);
+  nh.param<int>("vio/visual_map_max_points_per_voxel", visual_map_max_points_per_voxel, 0);
+  nh.param<int>("vio/visual_map_max_ref_age_frames", visual_map_max_ref_age_frames, 0);
   nh.param<int>("vio/visual_map_prune_interval", visual_map_prune_interval, 10);
   max_lidar_buffer_size = static_cast<size_t>(std::max(1, max_lidar_buffer_cfg));
   max_image_buffer_size = static_cast<size_t>(std::max(1, max_image_buffer_cfg));
@@ -215,11 +216,12 @@ void LIVMapper::initializeComponents()
   vio_manager->patch_pyrimid_level = patch_pyrimid_level;
   vio_manager->exposure_estimate_en = exposure_estimate_en;
   vio_manager->colmap_output_en = colmap_output_en;
+  vio_manager->visual_map_prune_en = visual_map_prune_en;
   vio_manager->visual_map_voxel_size = std::max(0.1, visual_map_voxel_size);
-  vio_manager->visual_map_half_size = std::max(1, visual_map_half_size);
-  vio_manager->visual_map_max_voxels = std::max(1000, visual_map_max_voxels);
-  vio_manager->visual_map_max_points_per_voxel = std::max(1, visual_map_max_points_per_voxel);
-  vio_manager->visual_map_max_ref_age_frames = std::max(10, visual_map_max_ref_age_frames);
+  vio_manager->visual_map_half_size = std::max(0, visual_map_half_size);
+  vio_manager->visual_map_max_voxels = std::max(0, visual_map_max_voxels);
+  vio_manager->visual_map_max_points_per_voxel = std::max(0, visual_map_max_points_per_voxel);
+  vio_manager->visual_map_max_ref_age_frames = std::max(0, visual_map_max_ref_age_frames);
   vio_manager->visual_map_prune_interval = std::max(1, visual_map_prune_interval);
   vio_manager->initializeVIO();
 
