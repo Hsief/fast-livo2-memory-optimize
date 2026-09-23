@@ -102,6 +102,13 @@ public:
   size_t path_max_poses = 1500;
   int path_pub_interval = 5;
   double diagnostics_interval_sec = 1.0;
+
+  double visual_map_voxel_size = 0.5;
+  int visual_map_half_size = 50;
+  int visual_map_max_voxels = 40000;
+  int visual_map_max_points_per_voxel = 8;
+  int visual_map_max_ref_age_frames = 200;
+  int visual_map_prune_interval = 10;
   unsigned long long dropped_lidar_frames = 0;
   unsigned long long dropped_image_frames = 0;
   unsigned long long dropped_imu_messages = 0;
