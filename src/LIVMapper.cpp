@@ -884,7 +884,7 @@ void LIVMapper::imu_prop_callback(const ros::TimerEvent &e)
 void LIVMapper::transformLidar(const Eigen::Matrix3d rot, const Eigen::Vector3d t, const PointCloudXYZI::Ptr &input_cloud, PointCloudXYZI::Ptr &trans_cloud)
 {
   trans_cloud->clear();
-  if (trans_cloud->capacity() < input_cloud->size()) trans_cloud->reserve(input_cloud->size());
+  if (trans_cloud->points.capacity() < input_cloud->size()) trans_cloud->points.reserve(input_cloud->size());
   for (size_t i = 0; i < input_cloud->size(); i++)
   {
     pcl::PointXYZINormal p_c = input_cloud->points[i];
