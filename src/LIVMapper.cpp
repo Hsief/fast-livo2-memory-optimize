@@ -827,6 +827,7 @@ void LIVMapper::run()
     // avoiding both extremes:
     //   spinOnce() -> callback backlog can monopolize the main thread;
     //   callOne()  -> estimator work can starve ROS callback consumption.
+    watchdog_phase.store(1);  // CALLBACK
     const double callback_t0 = omp_get_wtime();
     int callback_count = 0;
     while (callback_count < kMaxCallbacksPerCycle &&
@@ -839,19 +840,28 @@ void LIVMapper::run()
         break;
       ++callback_count;
     }
+    watchdog_callbacks_last_cycle.store(callback_count);
 
+    watchdog_phase.store(2);  // SYNC
     if (!sync_packages(LidarMeasures)) 
     {
+      watchdog_phase.store(0);  // IDLE
       rate.sleep();
       continue;
     }
+
+    watchdog_phase.store(3);  // FIRST_FRAME
     handleFirstFrame();
 
+    watchdog_phase.store(4);  // IMU
     processImu();
 
     // if (!p_imu->imu_time_init) continue;
 
+    watchdog_phase.store(5);  // ESTIMATION
     stateEstimationAndMapping();
+    ++watchdog_estimator_cycles;
+    watchdog_phase.store(0);  // IDLE
   }
   savePCD();
 }
