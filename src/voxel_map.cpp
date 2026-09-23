@@ -337,29 +337,31 @@ VoxelOctoTree *VoxelOctoTree::Insert(const pointWithVar &pv)
 
 void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
 {
-  cross_mat_list_.clear();
-  cross_mat_list_.reserve(feats_down_size_);
-  body_cov_list_.clear();
-  body_cov_list_.reserve(feats_down_size_);
+  cross_mat_list_.resize(feats_down_size_);
+  body_cov_list_.resize(feats_down_size_);
 
   // build_residual_time = 0.0;
   // ekf_time = 0.0;
   // double t0 = omp_get_wtime();
 
-  for (size_t i = 0; i < feats_down_body_->size(); i++)
+#ifdef MP_EN
+  omp_set_num_threads(MP_PROC_NUM);
+#pragma omp parallel for
+#endif
+  for (int i = 0; i < static_cast<int>(feats_down_body_->size()); ++i)
   {
     V3D point_this(feats_down_body_->points[i].x, feats_down_body_->points[i].y, feats_down_body_->points[i].z);
     if (point_this[2] == 0) { point_this[2] = 0.001; }
     M3D var;
     calcBodyCov(point_this, config_setting_.dept_err_, config_setting_.beam_err_, var);
-    body_cov_list_.push_back(var);
+    body_cov_list_[i] = var;
     point_this = extR_ * point_this + extT_;
     M3D point_crossmat;
     point_crossmat << SKEW_SYM_MATRX(point_this);
-    cross_mat_list_.push_back(point_crossmat);
+    cross_mat_list_[i] = point_crossmat;
   }
 
-  vector<pointWithVar>().swap(pv_list_);
+  pv_list_.clear();
   pv_list_.resize(feats_down_size_);
 
   int rematch_num = 0;
@@ -376,7 +378,10 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     TransformLidar(state_.rot_end, state_.pos_end, feats_down_body_, world_lidar);
     M3D rot_var = state_.cov.block<3, 3>(0, 0);
     M3D t_var = state_.cov.block<3, 3>(3, 3);
-    for (size_t i = 0; i < feats_down_body_->size(); i++)
+#ifdef MP_EN
+#pragma omp parallel for
+#endif
+    for (int i = 0; i < static_cast<int>(feats_down_body_->size()); ++i)
     {
       pointWithVar &pv = pv_list_[i];
       pv.point_b << feats_down_body_->points[i].x, feats_down_body_->points[i].y, feats_down_body_->points[i].z;
@@ -412,6 +417,9 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     VectorXd R_inv(effct_feat_num_);
     VectorXd meas_vec(effct_feat_num_);
     meas_vec.setZero();
+#ifdef MP_EN
+#pragma omp parallel for
+#endif
     for (int i = 0; i < effct_feat_num_; i++)
     {
       auto &ptpl = ptpl_list_[i];
