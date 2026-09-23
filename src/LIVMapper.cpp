@@ -568,15 +568,32 @@ void LIVMapper::backgroundPcdWriterLoop()
       }
       else if (job.intensity && !job.intensity->empty())
       {
-        PointCloudXYZI::Ptr filtered(new PointCloudXYZI());
-        pcl::VoxelGrid<PointType> voxel_filter;
-        voxel_filter.setInputCloud(job.intensity);
+        // Background map only needs XYZ + intensity. Drop PointXYZINormal's
+        // normal_x/normal_y/normal_z/curvature fields before writing.
+        pcl::PointCloud<pcl::PointXYZI>::Ptr compact(new pcl::PointCloud<pcl::PointXYZI>());
+        compact->points.resize(job.intensity->size());
+        compact->width = static_cast<uint32_t>(job.intensity->size());
+        compact->height = 1;
+        compact->is_dense = job.intensity->is_dense;
+        for (size_t i = 0; i < job.intensity->size(); ++i)
+        {
+          const PointType &src = job.intensity->points[i];
+          pcl::PointXYZI &dst = compact->points[i];
+          dst.x = src.x;
+          dst.y = src.y;
+          dst.z = src.z;
+          dst.intensity = src.intensity;
+        }
+
+        pcl::PointCloud<pcl::PointXYZI>::Ptr filtered(new pcl::PointCloud<pcl::PointXYZI>());
+        pcl::VoxelGrid<pcl::PointXYZI> voxel_filter;
+        voxel_filter.setInputCloud(compact);
         voxel_filter.setLeafSize(background_pcd_voxel_size,
                                  background_pcd_voxel_size,
                                  background_pcd_voxel_size);
         voxel_filter.filter(*filtered);
         writer.writeBinaryCompressed(job.path, *filtered);
-        ROS_INFO("[BG_PCD] saved compressed intensity chunk: raw=%zu filtered=%zu voxel=%.2fm file=%s",
+        ROS_INFO("[BG_PCD] saved compact compressed background chunk: raw=%zu filtered=%zu voxel=%.2fm file=%s",
                  job.intensity->size(), filtered->size(), background_pcd_voxel_size, job.path.c_str());
       }
     }
