@@ -702,14 +702,28 @@ void LIVMapper::run()
 {
   ros::Rate rate(5000);
   ros::CallbackQueue *callback_queue = ros::getGlobalCallbackQueue();
+  constexpr int kMaxCallbacksPerCycle = 64;
+  constexpr double kCallbackBudgetSec = 0.030;
 
   while (ros::ok()) 
   {
-    // ros::spinOnce() drains all currently queued callbacks. When sensor input
-    // outruns the estimator this can starve sync_packages()/LIO/VIO forever.
-    // callOne() preserves every callback and FIFO ordering, but gives the
-    // estimator a chance to run between callbacks. No sensor frame is dropped.
-    callback_queue->callOne(ros::WallDuration(0.0));
+    // Process a bounded batch of callbacks, then always give the estimator a
+    // chance to run. This preserves FIFO order and every sensor message, while
+    // avoiding both extremes:
+    //   spinOnce() -> callback backlog can monopolize the main thread;
+    //   callOne()  -> estimator work can starve ROS callback consumption.
+    const double callback_t0 = omp_get_wtime();
+    int callback_count = 0;
+    while (callback_count < kMaxCallbacksPerCycle &&
+           (omp_get_wtime() - callback_t0) < kCallbackBudgetSec)
+    {
+      const ros::CallbackQueue::CallOneResult result =
+          callback_queue->callOne(ros::WallDuration(0.0));
+      if (result == ros::CallbackQueue::Empty ||
+          result == ros::CallbackQueue::Disabled)
+        break;
+      ++callback_count;
+    }
 
     if (!sync_packages(LidarMeasures)) 
     {
