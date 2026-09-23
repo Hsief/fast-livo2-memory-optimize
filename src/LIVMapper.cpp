@@ -562,8 +562,6 @@ void LIVMapper::backgroundPcdWriterLoop()
                                  background_pcd_voxel_size,
                                  background_pcd_voxel_size);
         voxel_filter.filter(*filtered);
-        writer.writeBinaryCompressed(job.path, *filtered);
-
         for (const auto &p : filtered->points)
         {
           const int64_t vx = static_cast<int64_t>(std::floor(p.x / background_pcd_voxel_size));
@@ -579,6 +577,9 @@ void LIVMapper::backgroundPcdWriterLoop()
           ++v.count;
         }
 
+        // Checkpoint write is best-effort. The final in-memory colored voxel
+        // map is already updated, so a disk error cannot punch a hole in it.
+        writer.writeBinaryCompressed(job.path, *filtered);
         ROS_INFO("[BG_PCD] saved compressed RGB chunk: raw=%zu filtered=%zu global_voxels=%zu voxel=%.2fm file=%s",
                  job.rgb->size(), filtered->size(), background_color_voxels.size(),
                  background_pcd_voxel_size, job.path.c_str());
