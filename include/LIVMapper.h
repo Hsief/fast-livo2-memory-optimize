@@ -14,6 +14,7 @@ which is included as part of this source code package.
 #define LIV_MAPPER_H
 
 #include "IMU_Processing.h"
+#include <algorithm>
 #include "vio.h"
 #include "preprocess.h"
 #include <cv_bridge/cv_bridge.h>
