@@ -530,7 +530,7 @@ void VoxelMapManager::TransformLidar(const Eigen::Matrix3d rot, const Eigen::Vec
                                      pcl::PointCloud<pcl::PointXYZI>::Ptr &trans_cloud)
 {
   trans_cloud->clear();
-  if (trans_cloud->capacity() < input_cloud->size()) trans_cloud->reserve(input_cloud->size());
+  if (trans_cloud->points.capacity() < input_cloud->size()) trans_cloud->points.reserve(input_cloud->size());
   for (size_t i = 0; i < input_cloud->size(); i++)
   {
     pcl::PointXYZINormal p_c = input_cloud->points[i];
