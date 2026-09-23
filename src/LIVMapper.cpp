@@ -143,7 +143,7 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<int>("runtime/path_pub_interval", path_pub_interval, 5);
   nh.param<double>("runtime/diagnostics_interval_sec", diagnostics_interval_sec, 1.0);
   nh.param<bool>("runtime/log_to_file", runtime_log_to_file, true);
-  nh.param<int>("runtime/log_flush_interval", runtime_log_flush_interval, 5);
+  nh.param<int>("runtime/log_flush_interval", runtime_log_flush_interval, 1);
   runtime_log_flush_interval = std::max(1, runtime_log_flush_interval);
 
   nh.param<double>("vio/visual_map_voxel_size", visual_map_voxel_size, 0.5);
@@ -256,6 +256,23 @@ long LIVMapper::readProcStatusValue(const std::string &key) const
   return -1;
 }
 
+long LIVMapper::readMemInfoValue(const std::string &key) const
+{
+  std::ifstream meminfo("/proc/meminfo");
+  if (!meminfo.is_open()) return -1;
+
+  std::string line;
+  while (std::getline(meminfo, line))
+  {
+    if (line.compare(0, key.size(), key) != 0) continue;
+    std::istringstream iss(line.substr(key.size()));
+    long value = -1;
+    iss >> value;
+    return value;
+  }
+  return -1;
+}
+
 void LIVMapper::initializeRuntimeLog()
 {
   if (!runtime_log_to_file) return;
@@ -285,7 +302,7 @@ void LIVMapper::initializeRuntimeLog()
       << "# node=fast_livo2,package=fast_livo\n"
       << "# values are sampled approximately every diagnostics_interval_sec\n"
       << "wall_epoch_s,ros_time_s,processed_time_s,newest_sensor_time_s,lag_s,"
-      << "rss_kb,vmsize_kb,vmswap_kb,threads,"
+      << "rss_kb,rss_hwm_kb,vmsize_kb,vmswap_kb,threads,mem_available_kb,swap_free_kb,"
       << "lidar_buf,img_buf,imu_buf,prop_imu_buf,"
       << "root_voxels,visual_voxels,visual_points,path_poses,pub_wait_points,pcd_wait_points,"
       << "dropped_lidar,dropped_img,dropped_imu,"
@@ -698,9 +715,12 @@ void LIVMapper::printRuntimeDiagnostics()
                        ? newest_sensor_time - processed_time : 0.0;
 
   const long rss_kb = readProcStatusValue("VmRSS:");
+  const long rss_hwm_kb = readProcStatusValue("VmHWM:");
   const long vmsize_kb = readProcStatusValue("VmSize:");
   const long vmswap_kb = readProcStatusValue("VmSwap:");
   const long threads = readProcStatusValue("Threads:");
+  const long mem_available_kb = readMemInfoValue("MemAvailable:");
+  const long swap_free_kb = readMemInfoValue("SwapFree:");
 
   ROS_INFO("[NX_MON] lag=%.3fs rss=%ldMB swap=%ldMB buffers(lidar=%zu img=%zu imu=%zu prop=%zu) "
            "root_voxels=%zu visual_voxels=%zu visual_points=%zu path=%zu pub_wait=%zu pcd_wait=%zu "
@@ -731,7 +751,8 @@ void LIVMapper::printRuntimeDiagnostics()
 
     runtime_log_file << std::fixed << std::setprecision(6)
         << wall_epoch_s << ',' << ros_time_s << ',' << processed_time << ',' << newest_sensor_time << ',' << lag << ','
-        << rss_kb << ',' << vmsize_kb << ',' << vmswap_kb << ',' << threads << ','
+        << rss_kb << ',' << rss_hwm_kb << ',' << vmsize_kb << ',' << vmswap_kb << ',' << threads << ','
+        << mem_available_kb << ',' << swap_free_kb << ','
         << lid_raw_data_buffer.size() << ',' << img_buffer.size() << ',' << imu_buffer.size() << ',' << prop_imu_buffer.size() << ','
         << root_voxels << ',' << visual_voxels << ',' << visual_points << ',' << path.poses.size() << ','
         << (pcl_wait_pub ? pcl_wait_pub->size() : 0) << ',' << pcd_wait_points << ','
