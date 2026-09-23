@@ -1532,10 +1532,23 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
     if (slam_mode_ == LIVO && LidarMeasures.lio_vio_flg == VIO)
     {
       PointCloudXYZRGB::Ptr rviz_cloud(new PointCloudXYZRGB());
-      pcl::VoxelGrid<PointTypeRGB> viz_filter;
-      viz_filter.setLeafSize(viz_voxel_size, viz_voxel_size, viz_voxel_size);
-      viz_filter.setInputCloud(laserCloudWorldRGB);
-      viz_filter.filter(*rviz_cloud);
+      std::unordered_set<VOXEL_LOCATION> seen;
+      seen.reserve(laserCloudWorldRGB->size() / 4 + 1);
+      rviz_cloud->points.reserve(laserCloudWorldRGB->size() / 4 + 1);
+
+      for (const auto &p : laserCloudWorldRGB->points)
+      {
+        if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) continue;
+        const VOXEL_LOCATION key(
+            static_cast<int64_t>(std::floor(p.x / viz_voxel_size)),
+            static_cast<int64_t>(std::floor(p.y / viz_voxel_size)),
+            static_cast<int64_t>(std::floor(p.z / viz_voxel_size)));
+        if (seen.insert(key).second) rviz_cloud->points.push_back(p);
+      }
+
+      rviz_cloud->width = static_cast<uint32_t>(rviz_cloud->points.size());
+      rviz_cloud->height = 1;
+      rviz_cloud->is_dense = true;
       pcl::toROSMsg(*rviz_cloud, laserCloudmsg);
       ROS_DEBUG("[RVIZ] RGB raw=%zu display=%zu voxel=%.2fm",
                 laserCloudWorldRGB->size(), rviz_cloud->size(), viz_voxel_size);
@@ -1543,10 +1556,23 @@ void LIVMapper::publish_frame_world(const ros::Publisher &pubLaserCloudFullRes, 
     else
     {
       PointCloudXYZI::Ptr rviz_cloud(new PointCloudXYZI());
-      pcl::VoxelGrid<PointType> viz_filter;
-      viz_filter.setLeafSize(viz_voxel_size, viz_voxel_size, viz_voxel_size);
-      viz_filter.setInputCloud(pcl_w_wait_pub);
-      viz_filter.filter(*rviz_cloud);
+      std::unordered_set<VOXEL_LOCATION> seen;
+      seen.reserve(pcl_w_wait_pub->size() / 4 + 1);
+      rviz_cloud->points.reserve(pcl_w_wait_pub->size() / 4 + 1);
+
+      for (const auto &p : pcl_w_wait_pub->points)
+      {
+        if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) continue;
+        const VOXEL_LOCATION key(
+            static_cast<int64_t>(std::floor(p.x / viz_voxel_size)),
+            static_cast<int64_t>(std::floor(p.y / viz_voxel_size)),
+            static_cast<int64_t>(std::floor(p.z / viz_voxel_size)));
+        if (seen.insert(key).second) rviz_cloud->points.push_back(p);
+      }
+
+      rviz_cloud->width = static_cast<uint32_t>(rviz_cloud->points.size());
+      rviz_cloud->height = 1;
+      rviz_cloud->is_dense = true;
       pcl::toROSMsg(*rviz_cloud, laserCloudmsg);
       ROS_DEBUG("[RVIZ] cloud raw=%zu display=%zu voxel=%.2fm",
                 pcl_w_wait_pub->size(), rviz_cloud->size(), viz_voxel_size);
