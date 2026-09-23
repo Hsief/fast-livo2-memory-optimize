@@ -27,7 +27,7 @@ time_offset:
   exposure_time_init: 0.0
 
 preprocess:
-  point_filter_num: 1
+  point_filter_num: 2  # Xavier NX: halve raw Avia points before downstream processing
   filter_size_surf: 0.1
   lidar_type: 1 # 1：livox custom  2：pointcloud2
   scan_line: 6
@@ -73,7 +73,7 @@ uav:
   gravity_align_en: false
 
 publish:
-  dense_map_en: true
+  dense_map_en: false  # publish downsampled cloud; avoids saturating RViz/DRAM
   pub_effect_point_en: false 
   pub_plane_en: false
   pub_scan_num: 1
@@ -84,9 +84,9 @@ evo:
   pose_output_en: false
 
 pcd_save:
-  pcd_save_en: true
+  pcd_save_en: false  # IMPORTANT: interval=-1 otherwise accumulates the whole map in RAM
   type: 0 # 0: Static colored world map, 1: Body frame intensity, 2: World frame intensity
-  colmap_output_en: true # need to set interval = -1
+  colmap_output_en: false # enable only for offline export; it increases memory/I/O pressure
   filter_size_pcd: 0.15
   interval: -1
   # how many LiDAR frames saved in each pcd file;
@@ -95,3 +95,18 @@ pcd_save:
 image_save:
   img_save_en: false
   interval: 1
+
+# Xavier NX 6GB real-time safety limits.
+# Old sensor data is intentionally dropped if the estimator cannot keep up:
+# bounded latency is preferred over an ever-growing backlog.
+runtime:
+  lidar_sub_queue_size: 4
+  imu_sub_queue_size: 800
+  image_sub_queue_size: 3
+  max_lidar_buffer_size: 4
+  max_image_buffer_size: 3
+  max_imu_buffer_size: 1600
+  max_prop_imu_buffer_size: 1600
+  path_max_poses: 1500
+  path_pub_interval: 5
+  diagnostics_interval_sec: 1.0
