@@ -102,14 +102,22 @@ void Preprocess::avia_handler(const livox_ros_driver::CustomMsg::ConstPtr &msg)
   ROS_DEBUG("[Preprocess] input points=%d", plsize);
   // printf("point_filter_num: %d\n", point_filter_num);
 
-  pl_corn.reserve(plsize);
   pl_surf.reserve(plsize);
   pl_full.resize(plsize);
 
-  for (int i = 0; i < N_SCANS; i++)
+  // Per-line feature buffers are unused when feature extraction is disabled.
+  // Avoid reserving N_SCANS copies of the full frame in the common raw-point
+  // path. This changes allocation only, not a single output point.
+  if (feature_enabled)
   {
-    pl_buff[i].clear();
-    pl_buff[i].reserve(plsize);
+    pl_corn.reserve(plsize);
+    const size_t per_line_reserve =
+        static_cast<size_t>(plsize / std::max(1, N_SCANS) + 64);
+    for (int i = 0; i < N_SCANS; i++)
+    {
+      pl_buff[i].clear();
+      pl_buff[i].reserve(per_line_reserve);
+    }
   }
   uint valid_num = 0;
 
