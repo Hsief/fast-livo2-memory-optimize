@@ -745,7 +745,6 @@ void LIVMapper::backgroundPcdWriterLoop()
           const VOXEL_LOCATION key(vx, vy, vz);
 
           insert_colored_point(chunk_voxels[key], p);
-          insert_colored_point(background_color_voxels[key], p);
         }
 
         PointCloudXYZRGB::Ptr filtered(new PointCloudXYZRGB());
@@ -773,9 +772,9 @@ void LIVMapper::backgroundPcdWriterLoop()
         // Checkpoint write is best-effort. The final in-memory colored voxel
         // map is already updated, so a disk error cannot punch a hole in it.
         writer.writeBinaryCompressed(job.path, *filtered);
-        ROS_INFO("[BG_PCD] saved voxel RGB chunk: raw=%zu kept=%zu voxels=%zu global_voxels=%zu voxel=%.2fm max_pts=%d file=%s",
+        ROS_INFO("[BG_PCD] saved voxel RGB chunk: raw=%zu kept=%zu voxels=%zu voxel=%.2fm max_pts=%d file=%s",
                  job.rgb->size(), filtered->size(), chunk_voxels.size(),
-                 background_color_voxels.size(), background_pcd_voxel_size,
+                 background_pcd_voxel_size,
                  background_pcd_max_points_per_voxel, job.path.c_str());
       }
       else if (job.intensity && !job.intensity->empty())
@@ -815,47 +814,6 @@ void LIVMapper::backgroundPcdWriterLoop()
     }
   }
 
-  if (!background_color_voxels.empty())
-  {
-    try
-    {
-      PointCloudXYZRGB::Ptr final_map(new PointCloudXYZRGB());
-      final_map->points.reserve(background_color_voxels.size() *
-                                static_cast<size_t>(background_pcd_max_points_per_voxel));
-
-      for (const auto &kv : background_color_voxels)
-      {
-        const BackgroundColorVoxel &v = kv.second;
-        for (int i = 0; i < static_cast<int>(v.count); ++i)
-        {
-          pcl::PointXYZRGB p;
-          p.x = v.x[i];
-          p.y = v.y[i];
-          p.z = v.z[i];
-          p.r = v.r[i];
-          p.g = v.g[i];
-          p.b = v.b[i];
-          final_map->points.push_back(p);
-        }
-      }
-
-      final_map->width = static_cast<uint32_t>(final_map->points.size());
-      final_map->height = 1;
-      final_map->is_dense = true;
-
-      const std::string final_path = std::string(ROOT_DIR) + "Log/pcd/background_map.pcd";
-      pcl::PCDWriter writer;
-      writer.writeBinaryCompressed(final_path, *final_map);
-      ROS_INFO("[BG_PCD] final colored voxel map saved: points=%zu voxels=%zu voxel=%.2fm max_pts=%d file=%s",
-               final_map->size(), background_color_voxels.size(),
-               background_pcd_voxel_size, background_pcd_max_points_per_voxel,
-               final_path.c_str());
-    }
-    catch (const std::exception &e)
-    {
-      ROS_ERROR("[BG_PCD] final colored map export failed: %s", e.what());
-    }
-  }
 }
 
 void LIVMapper::stopBackgroundPcdWriter()
