@@ -14,6 +14,7 @@ which is included as part of this source code package.
 #define PREPROCESS_H_
 
 #include "common_lib.h"
+#include <algorithm>
 #include <livox_ros_driver/CustomMsg.h>
 #include <pcl_conversions/pcl_conversions.h>
 
