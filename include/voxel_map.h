@@ -43,6 +43,18 @@ typedef struct VoxelMapConfig
   double beam_err_;
   double dept_err_;
   double sigma_num_;
+
+  // Robust hybrid geometry:
+  // - planar voxels: point-to-plane + Cauchy
+  // - non-planar voxels: covariance-shaped 3D Gaussian residual
+  bool robust_weight_en_;
+  double cauchy_scale_;
+  bool hybrid_geometry_en_;
+  double distribution_weight_;
+  double distribution_cov_floor_;
+  double distribution_max_distance_;
+  int distribution_min_points_;
+
   bool is_pub_plane_map_;
 
   // config of local map sliding
@@ -65,6 +77,16 @@ typedef struct PointToPlane
   bool is_valid_;
   float dis_to_plane_;
 } PointToPlane;
+
+typedef struct PointToDistribution
+{
+  Eigen::Vector3d point_b_;
+  Eigen::Vector3d point_w_;
+  Eigen::Vector3d center_;
+  Eigen::Matrix3d voxel_cov_;
+  M3D body_cov_;
+  int layer_;
+} PointToDistribution;
 
 typedef struct VoxelPlane
 {
@@ -212,10 +234,12 @@ public:
 
   int feats_down_size_;
   int effct_feat_num_;
+  int distribution_feat_num_ = 0;
   std::vector<M3D> cross_mat_list_;
   std::vector<M3D> body_cov_list_;
   std::vector<pointWithVar> pv_list_;
   std::vector<PointToPlane> ptpl_list_;
+  std::vector<PointToDistribution> ptd_list_;
 
   VoxelMapManager(VoxelMapConfig &config_setting, std::unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &voxel_map)
       : config_setting_(config_setting), voxel_map_(voxel_map)
@@ -235,10 +259,17 @@ public:
 
   void UpdateVoxelMap(const std::vector<pointWithVar> &input_points);
 
-  void BuildResidualListOMP(std::vector<pointWithVar> &pv_list, std::vector<PointToPlane> &ptpl_list);
+  void BuildResidualListOMP(std::vector<pointWithVar> &pv_list,
+                            std::vector<PointToPlane> &ptpl_list,
+                            std::vector<PointToDistribution> &ptd_list);
 
-  void build_single_residual(pointWithVar &pv, const VoxelOctoTree *current_octo, const int current_layer, bool &is_sucess, double &prob,
-                             PointToPlane &single_ptpl);
+  void build_single_residual(pointWithVar &pv, const VoxelOctoTree *current_octo,
+                             const int current_layer, bool &is_sucess,
+                             double &prob, PointToPlane &single_ptpl);
+
+  bool build_distribution_residual(pointWithVar &pv,
+                                   VoxelOctoTree *current_octo,
+                                   PointToDistribution &single_ptd);
 
   void pubVoxelMap();
 
