@@ -1508,7 +1508,8 @@ void VIOManager::updateStateInverse(cv::Mat img, int level)
       auto &&HTz = H_sub_T * z;
       auto vec = (*state_propagat) - (*state);
       G.block<DIM_STATE, 6>(0, 0) = K_1.block<DIM_STATE, 6>(0, 0) * H_T_H.block<6, 6>(0, 0);
-      auto solution = -K_1.block<DIM_STATE, 6>(0, 0) * HTz + vec - G.block<DIM_STATE, 6>(0, 0) * vec.block<6, 1>(0, 0);
+      MD(DIM_STATE, 1)
+      solution = -K_1.block<DIM_STATE, 6>(0, 0) * HTz + vec - G.block<DIM_STATE, 6>(0, 0) * vec.block<6, 1>(0, 0);
 
       if (motion_guard_en)
       {
