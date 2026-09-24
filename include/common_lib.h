@@ -221,6 +221,52 @@ struct StatesGroup
   Matrix<double, DIM_STATE, DIM_STATE> cov; // states covariance
 };
 
+inline bool clampPoseCorrectionToPrior(
+    StatesGroup current,
+    const StatesGroup &prior,
+    Matrix<double, DIM_STATE, 1> &solution,
+    const double max_translation_m,
+    const double max_rotation_rad,
+    double *raw_translation_m = nullptr,
+    double *raw_rotation_rad = nullptr)
+{
+  if (max_translation_m <= 0.0 && max_rotation_rad <= 0.0) return false;
+
+  StatesGroup candidate = current + solution;
+  Matrix<double, DIM_STATE, 1> prior_delta = candidate - prior;
+
+  V3D dtheta = prior_delta.block<3, 1>(0, 0);
+  V3D dpos = prior_delta.block<3, 1>(3, 0);
+
+  const double rot_norm = dtheta.norm();
+  const double trans_norm = dpos.norm();
+  if (raw_translation_m) *raw_translation_m = trans_norm;
+  if (raw_rotation_rad) *raw_rotation_rad = rot_norm;
+
+  bool limited = false;
+  if (max_rotation_rad > 0.0 && rot_norm > max_rotation_rad)
+  {
+    dtheta *= max_rotation_rad / std::max(rot_norm, 1e-12);
+    limited = true;
+  }
+  if (max_translation_m > 0.0 && trans_norm > max_translation_m)
+  {
+    dpos *= max_translation_m / std::max(trans_norm, 1e-12);
+    limited = true;
+  }
+
+  if (!limited) return false;
+
+  const M3D desired_rot = prior.rot_end * Exp(dtheta);
+  const V3D desired_pos = prior.pos_end + dpos;
+
+  solution.block<3, 1>(0, 0) =
+      Log(current.rot_end.transpose() * desired_rot);
+  solution.block<3, 1>(3, 0) =
+      desired_pos - current.pos_end;
+  return true;
+}
+
 template <typename T>
 auto set_pose6d(const double t, const Matrix<T, 3, 1> &a, const Matrix<T, 3, 1> &g, const Matrix<T, 3, 1> &v, const Matrix<T, 3, 1> &p,
                 const Matrix<T, 3, 3> &R)
