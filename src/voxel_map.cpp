@@ -11,6 +11,8 @@ which is included as part of this source code package.
 */
 
 #include "voxel_map.h"
+#include <algorithm>
+#include <cmath>
 
 void calcBodyCov(Eigen::Vector3d &pb, const float range_inc, const float degree_inc, Eigen::Matrix3d &cov)
 {
@@ -41,6 +43,40 @@ void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
   nh.param<double>("lio/voxel_size", voxel_config.max_voxel_size_, 0.5);
   nh.param<double>("lio/min_eigen_value", voxel_config.planner_threshold_, 0.01);
   nh.param<double>("lio/sigma_num", voxel_config.sigma_num_, 3);
+
+  nh.param<bool>("lio/robust_weight_en",
+                 voxel_config.robust_weight_en_, true);
+  nh.param<double>("lio/cauchy_scale",
+                   voxel_config.cauchy_scale_, 2.5);
+  nh.param<bool>("lio/plane_quality_weight_en",
+                 voxel_config.plane_quality_weight_en_, true);
+  nh.param<double>("lio/plane_quality_min",
+                   voxel_config.plane_quality_min_, 0.55);
+
+  nh.param<bool>("lio/line_constraint_en",
+                 voxel_config.line_constraint_en_, true);
+  nh.param<double>("lio/line_mid_max_ratio",
+                   voxel_config.line_mid_max_ratio_, 0.08);
+  nh.param<double>("lio/line_weight",
+                   voxel_config.line_weight_, 0.05);
+  nh.param<double>("lio/line_max_distance",
+                   voxel_config.line_max_distance_, 0.20);
+  nh.param<int>("lio/line_max_constraints",
+                voxel_config.line_max_constraints_, 64);
+
+  voxel_config.cauchy_scale_ =
+      std::max(0.25, voxel_config.cauchy_scale_);
+  voxel_config.plane_quality_min_ =
+      std::max(0.1, std::min(1.0, voxel_config.plane_quality_min_));
+  voxel_config.line_mid_max_ratio_ =
+      std::max(0.01, std::min(0.30, voxel_config.line_mid_max_ratio_));
+  voxel_config.line_weight_ =
+      std::max(0.0, std::min(0.25, voxel_config.line_weight_));
+  voxel_config.line_max_distance_ =
+      std::max(0.02, voxel_config.line_max_distance_);
+  voxel_config.line_max_constraints_ =
+      std::max(0, voxel_config.line_max_constraints_);
+
   nh.param<double>("lio/beam_err", voxel_config.beam_err_, 0.02);
   nh.param<double>("lio/dept_err", voxel_config.dept_err_, 0.05);
   nh.param<vector<int>>("lio/layer_init_num", voxel_config.layer_init_num_, vector<int>{5,5,5,5,5});
@@ -749,8 +785,19 @@ void VoxelMapManager::build_single_residual(pointWithVar &pv, const VoxelOctoTre
           single_ptpl.point_w_ = pv.point_w;
           single_ptpl.plane_var_ = plane.plane_var_;
           single_ptpl.normal_ = plane.normal_;
+          single_ptpl.tangent_normal_ = plane.y_normal_;
           single_ptpl.center_ = plane.center_;
           single_ptpl.d_ = plane.d_;
+          single_ptpl.eigen_value_ = plane.min_eigen_value_;
+          single_ptpl.mid_eigen_value_ = plane.mid_eigen_value_;
+          single_ptpl.max_eigen_value_ = plane.max_eigen_value_;
+          const double mid_eig =
+              std::max(1e-9, static_cast<double>(plane.mid_eigen_value_));
+          single_ptpl.plane_quality_ =
+              std::max(0.0, std::min(
+                  1.0,
+                  1.0 - static_cast<double>(plane.min_eigen_value_) /
+                            mid_eig));
           single_ptpl.layer_ = current_layer;
           single_ptpl.dis_to_plane_ = plane.normal_(0) * p_w(0) + plane.normal_(1) * p_w(1) + plane.normal_(2) * p_w(2) + plane.d_;
         }
