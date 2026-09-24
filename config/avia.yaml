@@ -72,6 +72,7 @@ lio:
   distribution_cov_floor: 0.05
   distribution_max_distance: 0.75
   distribution_min_points: 5
+  distribution_max_constraints: 500 # hard cap per EKF iteration for NX realtime
 
   min_eigen_value: 0.0025 # 0.005
   voxel_size: 0.5
