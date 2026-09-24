@@ -21,6 +21,8 @@ which is included as part of this source code package.
 #include <unistd.h>
 #include <limits>
 #include <unordered_set>
+#include <algorithm>
+#include <cmath>
 
 LIVMapper::LIVMapper(ros::NodeHandle &nh)
     : extT(0, 0, 0),
