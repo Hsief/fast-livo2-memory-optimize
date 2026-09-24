@@ -61,6 +61,15 @@ void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
   nh.param<int>("lio/distribution_max_constraints",
                 voxel_config.distribution_max_constraints_, 500);
 
+  nh.param<bool>("lio/line_constraint_en",
+                 voxel_config.line_constraint_en_, true);
+  nh.param<double>("lio/line_mid_max_ratio",
+                   voxel_config.line_mid_max_ratio_, 0.15);
+  nh.param<double>("lio/line_weight",
+                   voxel_config.line_weight_, 0.10);
+  nh.param<double>("lio/line_max_distance",
+                   voxel_config.line_max_distance_, 0.30);
+
   voxel_config.cauchy_scale_ =
       std::max(0.25, voxel_config.cauchy_scale_);
   voxel_config.distribution_weight_ =
@@ -73,6 +82,12 @@ void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
       std::max(3, voxel_config.distribution_min_points_);
   voxel_config.distribution_max_constraints_ =
       std::max(0, voxel_config.distribution_max_constraints_);
+  voxel_config.line_mid_max_ratio_ =
+      std::max(0.01, std::min(0.5, voxel_config.line_mid_max_ratio_));
+  voxel_config.line_weight_ =
+      std::max(0.0, std::min(1.0, voxel_config.line_weight_));
+  voxel_config.line_max_distance_ =
+      std::max(0.02, voxel_config.line_max_distance_);
 
   nh.param<double>("lio/beam_err", voxel_config.beam_err_, 0.02);
   nh.param<double>("lio/dept_err", voxel_config.dept_err_, 0.05);
@@ -527,6 +542,82 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
       geometry_rhs.noalias() += Hsub_T_R_inv * meas_vec;
     }
 
+    int line_used = 0;
+    double line_weight_sum = 0.0;
+    if (config_setting_.line_constraint_en_)
+    {
+      const double floor_var =
+          config_setting_.distribution_cov_floor_ *
+          config_setting_.distribution_cov_floor_;
+
+      for (const auto &ptpl : ptpl_list_)
+      {
+        const double max_eig =
+            std::max(1e-9, ptpl.max_eigen_value_);
+        const double line_ratio =
+            std::max(0.0, ptpl.mid_eigen_value_) / max_eig;
+        if (line_ratio > config_setting_.line_mid_max_ratio_)
+          continue;
+
+        const V3D offset = ptpl.point_w_ - ptpl.center_;
+        const double residual =
+            ptpl.tangent_normal_.dot(offset);
+        if (!std::isfinite(residual) ||
+            std::abs(residual) >
+                config_setting_.line_max_distance_)
+          continue;
+
+        V3D point_this = extR_ * ptpl.point_b_ + extT_;
+        M3D point_crossmat;
+        point_crossmat << SKEW_SYM_MATRX(point_this);
+
+        M3D point_var =
+            state_propagat.rot_end * extR_ *
+            ptpl.body_cov_ *
+            (state_propagat.rot_end * extR_).transpose();
+
+        const double tangent_point_var =
+            (ptpl.tangent_normal_.transpose() * point_var *
+             ptpl.tangent_normal_)(0, 0);
+        const double measurement_var =
+            std::max(
+                1e-9,
+                floor_var +
+                std::max(0.0, ptpl.mid_eigen_value_) +
+                tangent_point_var);
+
+        double robust_weight = 1.0;
+        if (config_setting_.robust_weight_en_)
+        {
+          const double normalized =
+              std::abs(residual) / std::sqrt(measurement_var);
+          const double scaled =
+              normalized / config_setting_.cauchy_scale_;
+          robust_weight = 1.0 / (1.0 + scaled * scaled);
+        }
+
+        const double info =
+            config_setting_.line_weight_ *
+            robust_weight / measurement_var;
+
+        V3D A(point_crossmat * state_.rot_end.transpose() *
+              ptpl.tangent_normal_);
+        Eigen::Matrix<double, 1, 6> J_line;
+        J_line << VEC_FROM_ARRAY(A),
+            ptpl.tangent_normal_[0],
+            ptpl.tangent_normal_[1],
+            ptpl.tangent_normal_[2];
+
+        geometry_info.noalias() +=
+            J_line.transpose() * info * J_line;
+        geometry_rhs.noalias() +=
+            J_line.transpose() * info * (-residual);
+
+        line_weight_sum += robust_weight;
+        ++line_used;
+      }
+    }
+
     double distribution_weight_sum = 0.0;
     double distribution_mahal_sum = 0.0;
     int distribution_used = 0;
@@ -622,10 +713,13 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
 
       ROS_INFO_THROTTLE(
           1.0,
-          "[HYBRID_LIO] plane=%d dist=%d c=%.2f plane_w=%.3f dist_w=%.3f dist_mahal=%.2f dist_scale=%.2f",
-          effct_feat_num_, distribution_used,
+          "[HYBRID_LIO] plane=%d line=%d dist=%d c=%.2f plane_w=%.3f line_w=%.3f dist_w=%.3f dist_mahal=%.2f line_scale=%.2f dist_scale=%.2f",
+          effct_feat_num_, line_used, distribution_used,
           config_setting_.cauchy_scale_,
-          plane_mean_w, dist_mean_w, dist_mean_mahal,
+          plane_mean_w,
+          line_used > 0 ? line_weight_sum / line_used : 1.0,
+          dist_mean_w, dist_mean_mahal,
+          config_setting_.line_weight_,
           config_setting_.distribution_weight_);
     }
 
@@ -989,8 +1083,12 @@ void VoxelMapManager::build_single_residual(pointWithVar &pv, const VoxelOctoTre
           single_ptpl.point_w_ = pv.point_w;
           single_ptpl.plane_var_ = plane.plane_var_;
           single_ptpl.normal_ = plane.normal_;
+          single_ptpl.tangent_normal_ = plane.y_normal_;
           single_ptpl.center_ = plane.center_;
           single_ptpl.d_ = plane.d_;
+          single_ptpl.eigen_value_ = plane.min_eigen_value_;
+          single_ptpl.mid_eigen_value_ = plane.mid_eigen_value_;
+          single_ptpl.max_eigen_value_ = plane.max_eigen_value_;
           single_ptpl.layer_ = current_layer;
           single_ptpl.dis_to_plane_ = plane.normal_(0) * p_w(0) + plane.normal_(1) * p_w(1) + plane.normal_(2) * p_w(2) + plane.d_;
         }
