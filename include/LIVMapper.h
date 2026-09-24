@@ -107,6 +107,11 @@ public:
 
   double res_mean_last = 0.05;
   double gyr_cov = 0, acc_cov = 0, inv_expo_cov = 0;
+
+  bool motion_guard_en = true;
+  double max_translation_correction_m = 0.15;
+  double max_rotation_correction_deg = 5.0;
+
   double blind_rgb_points = 0.0;
   double last_timestamp_lidar = -1.0, last_timestamp_imu = -1.0, last_timestamp_img = -1.0;
   double filter_size_surf_min = 0;
