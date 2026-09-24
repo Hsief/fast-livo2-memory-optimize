@@ -99,6 +99,23 @@ find_package(OpenCV REQUIRED)
 find_package(Sophus REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread)
 
+# Optional CUDA acceleration. Xavier NX is compute capability 7.2.
+# The estimator keeps a CPU fallback, so this branch still builds without CUDA.
+find_package(CUDA QUIET)
+if(CUDA_FOUND)
+  message(STATUS "CUDA found: ${CUDA_VERSION}")
+  set(CUDA_PROPAGATE_HOST_FLAGS OFF)
+  list(APPEND CUDA_NVCC_FLAGS "-O3")
+  list(APPEND CUDA_NVCC_FLAGS "-std=c++14")
+  list(APPEND CUDA_NVCC_FLAGS "--expt-relaxed-constexpr")
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+    list(APPEND CUDA_NVCC_FLAGS "-gencode=arch=compute_72,code=sm_72")
+    message(STATUS "CUDA target: Jetson Xavier NX sm_72")
+  endif()
+else()
+  message(STATUS "CUDA not found: building CPU fallback")
+endif()
+
 set(Sophus_LIBRARIES Sophus::Sophus)
 
 # Define the catkin package
@@ -113,11 +130,18 @@ include_directories(
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
+  ${CUDA_INCLUDE_DIRS}
   /opt/ros/noetic/include
   include
 )
 
 # Add libraries
+if(CUDA_FOUND)
+  cuda_add_library(gpu_fast_livo2 src/gpu_accel.cu)
+else()
+  add_library(gpu_fast_livo2 src/gpu_accel_stub.cpp)
+endif()
+
 add_library(vio_fast_livo2 src/vio.cpp src/frame.cpp src/visual_point.cpp)
 add_library(lio_fast_livo2 src/voxel_map.cpp)
 add_library(pre_fast_livo2 src/preprocess.cpp)
@@ -139,6 +163,8 @@ target_link_libraries(fastlivo_mapping
   ${OpenCV_LIBRARIES}
   ${Sophus_LIBRARIES}
   ${Boost_LIBRARIES}
+  gpu_fast_livo2
+  ${CUDA_LIBRARIES}
   usb-1.0
 )
 
