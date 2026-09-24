@@ -49,6 +49,19 @@ typedef struct VoxelMapConfig
   double plane_quality_min_;
   bool incidence_weight_en_;
   double incidence_cos_min_;
+
+  // Degeneracy-aware LIO update.  Detection combines a Hessian subspace test
+  // with X-ICP-style correspondence alignment; confirmed weak directions are
+  // constrained in the ESIKF update rather than globally weakening LiDAR.
+  bool localizability_en_;
+  double localizability_hessian_ratio_;
+  double localizability_enough_contribution_;
+  double localizability_strong_contribution_;
+  double localizability_min_alignment_cos_;
+  double localizability_strong_alignment_cos_;
+  int localizability_max_constraints_;
+  bool constrained_esikf_en_;
+
   bool is_pub_plane_map_;
 
   // config of local map sliding
