@@ -43,6 +43,11 @@ typedef struct VoxelMapConfig
   double beam_err_;
   double dept_err_;
   double sigma_num_;
+
+  // Robust point-to-plane measurement weighting.
+  bool robust_weight_en_;
+  double cauchy_scale_;
+
   bool is_pub_plane_map_;
 
   // config of local map sliding
