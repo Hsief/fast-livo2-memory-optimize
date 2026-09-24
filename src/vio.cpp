@@ -1499,6 +1499,27 @@ void VIOManager::updateStateInverse(cv::Mat img, int level)
       auto vec = (*state_propagat) - (*state);
       G.block<DIM_STATE, 6>(0, 0) = K_1.block<DIM_STATE, 6>(0, 0) * H_T_H.block<6, 6>(0, 0);
       auto solution = -K_1.block<DIM_STATE, 6>(0, 0) * HTz + vec - G.block<DIM_STATE, 6>(0, 0) * vec.block<6, 1>(0, 0);
+
+      if (motion_guard_en)
+      {
+        double raw_trans = 0.0;
+        double raw_rot = 0.0;
+        const bool limited = clampPoseCorrectionToPrior(
+            *state, *state_propagat, solution,
+            max_translation_correction_m,
+            max_rotation_correction_deg * 0.017453292519943295,
+            &raw_trans, &raw_rot);
+        if (limited)
+        {
+          ROS_WARN_THROTTLE(
+              1.0,
+              "[MOTION_GUARD_VIO] clipped correction raw_trans=%.3fm raw_rot=%.2fdeg limits=(%.3fm, %.2fdeg)",
+              raw_trans, raw_rot * 57.2957795131,
+              max_translation_correction_m,
+              max_rotation_correction_deg);
+        }
+      }
+
       (*state) += solution;
       auto &&rot_add = solution.block<3, 1>(0, 0);
       auto &&t_add = solution.block<3, 1>(3, 0);
@@ -1665,6 +1686,26 @@ void VIOManager::updateState(cv::Mat img, int level)
       G.block<DIM_STATE, 7>(0, 0) = K_1.block<DIM_STATE, 7>(0, 0) * H_T_H.block<7, 7>(0, 0);
       MD(DIM_STATE, 1)
       solution = -K_1.block<DIM_STATE, 7>(0, 0) * HTz + vec - G.block<DIM_STATE, 7>(0, 0) * vec.block<7, 1>(0, 0);
+
+      if (motion_guard_en)
+      {
+        double raw_trans = 0.0;
+        double raw_rot = 0.0;
+        const bool limited = clampPoseCorrectionToPrior(
+            *state, *state_propagat, solution,
+            max_translation_correction_m,
+            max_rotation_correction_deg * 0.017453292519943295,
+            &raw_trans, &raw_rot);
+        if (limited)
+        {
+          ROS_WARN_THROTTLE(
+              1.0,
+              "[MOTION_GUARD_VIO] clipped correction raw_trans=%.3fm raw_rot=%.2fdeg limits=(%.3fm, %.2fdeg)",
+              raw_trans, raw_rot * 57.2957795131,
+              max_translation_correction_m,
+              max_rotation_correction_deg);
+        }
+      }
 
       (*state) += solution;
       auto &&rot_add = solution.block<3, 1>(0, 0);
