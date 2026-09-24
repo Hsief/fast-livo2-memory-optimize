@@ -11,6 +11,8 @@ which is included as part of this source code package.
 */
 
 #include "IMU_Processing.h"
+#include <algorithm>
+#include <cmath>
 
 ImuProcess::ImuProcess() : Eye3d(M3D::Identity()),
                            Zero3d(0, 0, 0), b_first_frame(true), imu_need_init(true)
