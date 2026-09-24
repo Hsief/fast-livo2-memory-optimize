@@ -11,6 +11,8 @@ which is included as part of this source code package.
 */
 
 #include "voxel_map.h"
+#include <algorithm>
+#include <cmath>
 
 void calcBodyCov(Eigen::Vector3d &pb, const float range_inc, const float degree_inc, Eigen::Matrix3d &cov)
 {
@@ -41,6 +43,9 @@ void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
   nh.param<double>("lio/voxel_size", voxel_config.max_voxel_size_, 0.5);
   nh.param<double>("lio/min_eigen_value", voxel_config.planner_threshold_, 0.01);
   nh.param<double>("lio/sigma_num", voxel_config.sigma_num_, 3);
+  nh.param<bool>("lio/robust_weight_en", voxel_config.robust_weight_en_, true);
+  nh.param<double>("lio/cauchy_scale", voxel_config.cauchy_scale_, 2.5);
+  voxel_config.cauchy_scale_ = std::max(0.25, voxel_config.cauchy_scale_);
   nh.param<double>("lio/beam_err", voxel_config.beam_err_, 0.02);
   nh.param<double>("lio/dept_err", voxel_config.dept_err_, 0.05);
   nh.param<vector<int>>("lio/layer_init_num", voxel_config.layer_init_num_, vector<int>{5,5,5,5,5});
@@ -416,7 +421,9 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     MatrixXd Hsub_T_R_inv(6, effct_feat_num_);
     VectorXd R_inv(effct_feat_num_);
     VectorXd meas_vec(effct_feat_num_);
+    VectorXd robust_weights(effct_feat_num_);
     meas_vec.setZero();
+    robust_weights.setOnes();
 #ifdef MP_EN
 #pragma omp parallel for
 #endif
@@ -455,8 +462,29 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
 
       double sigma_l = J_nq * ptpl_list_[i].plane_var_ * J_nq.transpose();
 
-      R_inv(i) = 1.0 / (0.001 + sigma_l + ptpl_list_[i].normal_.transpose() * var * ptpl_list_[i].normal_);
-      // R_inv(i) = 1.0 / (sigma_l + ptpl_list_[i].normal_.transpose() * var * ptpl_list_[i].normal_);
+      const double measurement_var =
+          std::max(1e-9,
+                   0.001 + sigma_l +
+                   (ptpl_list_[i].normal_.transpose() * var *
+                    ptpl_list_[i].normal_)(0, 0));
+
+      // FAST-LIVO2 already gates correspondences and models point/plane
+      // uncertainty.  Cauchy IRLS adds a soft heavy-tailed penalty so that a
+      // surviving but inconsistent point-to-plane match cannot dominate the
+      // ESIKF update.
+      double robust_weight = 1.0;
+      if (config_setting_.robust_weight_en_)
+      {
+        const double normalized_residual =
+            std::abs(static_cast<double>(ptpl_list_[i].dis_to_plane_)) /
+            std::sqrt(measurement_var);
+        const double scaled =
+            normalized_residual / config_setting_.cauchy_scale_;
+        robust_weight = 1.0 / (1.0 + scaled * scaled);
+      }
+
+      robust_weights(i) = robust_weight;
+      R_inv(i) = robust_weight / measurement_var;
 
       /*** calculate the Measuremnt Jacobian matrix H ***/
       V3D A(point_crossmat * state_.rot_end.transpose() * ptpl_list_[i].normal_);
@@ -465,6 +493,20 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
           ptpl_list_[i].normal_[1] * R_inv(i), ptpl_list_[i].normal_[2] * R_inv(i);
       meas_vec(i) = -ptpl_list_[i].dis_to_plane_;
     }
+    if (config_setting_.robust_weight_en_ && effct_feat_num_ > 0)
+    {
+      int downweighted = 0;
+      for (int wi = 0; wi < robust_weights.size(); ++wi)
+      {
+        if (robust_weights(wi) < 0.9) ++downweighted;
+      }
+      ROS_INFO_THROTTLE(
+          1.0,
+          "[CAUCHY_LIO] c=%.2f effective=%d mean_w=%.3f min_w=%.3f downweighted_lt_0.9=%d",
+          config_setting_.cauchy_scale_, effct_feat_num_,
+          robust_weights.mean(), robust_weights.minCoeff(), downweighted);
+    }
+
     EKF_stop_flg = false;
     flg_EKF_converged = false;
     /*** Iterative Kalman Filter Update ***/
