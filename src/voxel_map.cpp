@@ -814,8 +814,38 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     {
       /*** Covariance Update ***/
       // _state.cov = (I_STATE - G) * _state.cov;
-      state_.cov.block<DIM_STATE, DIM_STATE>(0, 0) =
-          (I_STATE.block<DIM_STATE, DIM_STATE>(0, 0) - G.block<DIM_STATE, DIM_STATE>(0, 0)) * state_.cov.block<DIM_STATE, DIM_STATE>(0, 0);
+      const MD(DIM_STATE, DIM_STATE) prior_covariance =
+          state_.cov.block<DIM_STATE, DIM_STATE>(0, 0);
+      MD(DIM_STATE, DIM_STATE) posterior_covariance =
+          (I_STATE.block<DIM_STATE, DIM_STATE>(0, 0) -
+           G.block<DIM_STATE, DIM_STATE>(0, 0)) *
+          prior_covariance;
+
+      if (config_setting_.constrained_esikf_en_ &&
+          !localizability.weak_rows.empty())
+      {
+        const int m = static_cast<int>(localizability.weak_rows.size());
+        Eigen::MatrixXd C = Eigen::MatrixXd::Zero(m, DIM_STATE);
+        for (int r = 0; r < m; ++r)
+          C.block(r, 0, 1, 6) = localizability.weak_rows[r];
+
+        // The constraints mean "LiDAR has no reliable information in this
+        // direction", not "the direction is known exactly".  Therefore do
+        // not let the LiDAR update artificially shrink prior uncertainty in
+        // the weak subspace.
+        Eigen::MatrixXd strong_projector =
+            Eigen::MatrixXd::Identity(DIM_STATE, DIM_STATE) -
+            C.transpose() * C;
+        posterior_covariance =
+            prior_covariance +
+            strong_projector *
+                (posterior_covariance - prior_covariance) *
+                strong_projector.transpose();
+      }
+
+      posterior_covariance =
+          0.5 * (posterior_covariance + posterior_covariance.transpose());
+      state_.cov.block<DIM_STATE, DIM_STATE>(0, 0) = posterior_covariance;
       // total_distance += (_state.pos_end - position_last).norm();
       position_last_ = state_.pos_end;
       geoQuat_ = tf::createQuaternionMsgFromRollPitchYaw(euler_cur(0), euler_cur(1), euler_cur(2));
