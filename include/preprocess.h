@@ -165,11 +165,12 @@ public:
   vector<orgtype> typess[128]; // maximum 128 line lidar
   int lidar_type, point_filter_num, N_SCANS;
   
-  double blind, blind_sqr;
+  double blind, blind_sqr, max_range, max_range_sqr;
   bool feature_enabled, given_offset_time;
   ros::Publisher pub_full, pub_surf, pub_corn;
 
 private:
+  void filterByMaxRange();
   void avia_handler(const livox_ros_driver::CustomMsg::ConstPtr &msg);
   void oust64_handler(const sensor_msgs::PointCloud2::ConstPtr &msg);
   void velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg);

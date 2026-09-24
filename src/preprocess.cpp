@@ -11,11 +11,14 @@ which is included as part of this source code package.
 */
 
 #include "preprocess.h"
+#include <algorithm>
 
 #define RETURN0 0x00
 #define RETURN0AND1 0x10
 
-Preprocess::Preprocess() : feature_enabled(0), lidar_type(AVIA), blind(0.01), point_filter_num(1)
+Preprocess::Preprocess()
+    : lidar_type(AVIA), point_filter_num(1), blind(0.01), blind_sqr(0.0001),
+      max_range(0.0), max_range_sqr(0.0), feature_enabled(false)
 {
   inf_bound = 10;
   N_SCANS = 6;
@@ -54,6 +57,9 @@ void Preprocess::set(bool feat_en, int lid_type, double bld, int pfilt_num)
 void Preprocess::process(const livox_ros_driver::CustomMsg::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out)
 {
   avia_handler(msg);
+  // The raw-point path is already range-limited; feature extraction may
+  // synthesize/average points, so enforce the limit on its output too.
+  if (feature_enabled) filterByMaxRange();
   *pcl_out = pl_surf;
 }
 
@@ -89,7 +95,23 @@ void Preprocess::process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointClo
     printf("Error LiDAR Type: %d \n", lidar_type);
     break;
   }
+  filterByMaxRange();
   *pcl_out = pl_surf;
+}
+
+void Preprocess::filterByMaxRange()
+{
+  if (max_range_sqr <= 0.0) return;
+
+  // Also catch feature-extracted/averaged points and PointCloud2 LiDAR paths.
+  auto &points = pl_surf.points;
+  points.erase(std::remove_if(points.begin(), points.end(), [this](const PointType &point) {
+    const double x = point.x, y = point.y, z = point.z;
+    const double range_sqr = x * x + y * y + z * z;
+    return !(range_sqr <= max_range_sqr);
+  }), points.end());
+  pl_surf.width = points.size();
+  pl_surf.height = 1;
 }
 
 void Preprocess::avia_handler(const livox_ros_driver::CustomMsg::ConstPtr &msg)
@@ -127,17 +149,22 @@ void Preprocess::avia_handler(const livox_ros_driver::CustomMsg::ConstPtr &msg)
     {
       if ((msg->points[i].line < N_SCANS) && ((msg->points[i].tag & 0x30) == 0x10))
       {
+        const double x = msg->points[i].x, y = msg->points[i].y, z = msg->points[i].z;
+        if (max_range_sqr > 0.0 && !(x * x + y * y + z * z <= max_range_sqr)) continue;
+
         pl_full[i].x = msg->points[i].x;
         pl_full[i].y = msg->points[i].y;
         pl_full[i].z = msg->points[i].z;
         pl_full[i].intensity = msg->points[i].reflectivity;
         pl_full[i].curvature = msg->points[i].offset_time / float(1000000); // use curvature as time of each laser points
 
-        bool is_new = false;
-        if ((abs(pl_full[i].x - pl_full[i - 1].x) > 1e-7) || (abs(pl_full[i].y - pl_full[i - 1].y) > 1e-7) ||
-            (abs(pl_full[i].z - pl_full[i - 1].z) > 1e-7))
+        auto &line_points = pl_buff[msg->points[i].line];
+        if (line_points.empty() ||
+            abs(pl_full[i].x - line_points.back().x) > 1e-7 ||
+            abs(pl_full[i].y - line_points.back().y) > 1e-7 ||
+            abs(pl_full[i].z - line_points.back().z) > 1e-7)
         {
-          pl_buff[msg->points[i].line].push_back(pl_full[i]);
+          line_points.push_back(pl_full[i]);
         }
       }
     }
@@ -195,7 +222,10 @@ void Preprocess::avia_handler(const livox_ros_driver::CustomMsg::ConstPtr &msg)
 
         if (valid_num % point_filter_num == 0)
         {
-          if (pl_full[i].x * pl_full[i].x + pl_full[i].y * pl_full[i].y + pl_full[i].z * pl_full[i].z >= blind_sqr)
+          const double x = pl_full[i].x, y = pl_full[i].y, z = pl_full[i].z;
+          const double range_sqr = x * x + y * y + z * z;
+          if (range_sqr >= blind_sqr &&
+              (max_range_sqr <= 0.0 || range_sqr <= max_range_sqr))
           {
             pl_surf.push_back(pl_full[i]);
             // if (i % 100 == 0 || i == 0) printf("pl_full[i].curvature: %f \n",
@@ -762,10 +792,11 @@ void Preprocess::give_feature(pcl::PointCloud<PointType> &pl, vector<orgtype> &t
   }
   uint head = 0;
 
-  while (types[head].range < blind_sqr)
+  while (head < plsize && types[head].range < blind_sqr)
   {
     head++;
   }
+  if (head == plsize) return;
 
   // Surf
   plsize2 = (plsize > group_size) ? (plsize - group_size) : 0;

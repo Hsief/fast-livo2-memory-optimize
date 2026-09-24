@@ -32,6 +32,7 @@ preprocess:
   lidar_type: 1 # 1：livox custom  2：pointcloud2
   scan_line: 6
   blind: 0.1
+  max_range: 50.0 # 米；以雷达为原点的三维距离，超过此距离的点不参与建图（设为 0 则关闭过滤）
 
 vio:
   max_iterations: 5

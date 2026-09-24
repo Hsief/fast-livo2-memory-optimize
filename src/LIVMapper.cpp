@@ -101,6 +101,12 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<bool>("imu/ba_bg_est_en", ba_bg_est_en, true);
 
   nh.param<double>("preprocess/blind", p_pre->blind, 0.01);
+  nh.param<double>("preprocess/max_range", p_pre->max_range, 0.0);
+  if (!std::isfinite(p_pre->max_range) || p_pre->max_range < 0.0)
+  {
+    ROS_WARN("Invalid preprocess/max_range; disabling maximum LiDAR range filter");
+    p_pre->max_range = 0.0;
+  }
   nh.param<double>("preprocess/filter_size_surf", filter_size_surf_min, 0.5);
   nh.param<bool>("preprocess/hilti_en", hilti_en, false);
   nh.param<int>("preprocess/lidar_type", p_pre->lidar_type, AVIA);
@@ -146,6 +152,7 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   viz_publish_interval = std::max(1, viz_publish_interval);
 
   p_pre->blind_sqr = p_pre->blind * p_pre->blind;
+  p_pre->max_range_sqr = p_pre->max_range * p_pre->max_range;
 }
 
 void LIVMapper::initializeComponents() 
@@ -1080,7 +1087,7 @@ void LIVMapper::livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg_i
 
   if (!ptr || ptr->empty())
   {
-    ROS_ERROR("Received an empty point cloud");
+    ROS_WARN_THROTTLE(5.0, "Received an empty LiDAR point cloud (possibly all points beyond preprocess/max_range)");
     return;
   }
 
