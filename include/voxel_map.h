@@ -44,7 +44,7 @@ typedef struct VoxelMapConfig
   double dept_err_;
   double sigma_num_;
   bool robust_weight_en_;
-  double huber_delta_;
+  double cauchy_scale_;
   bool plane_quality_weight_en_;
   double plane_quality_min_;
   bool incidence_weight_en_;
