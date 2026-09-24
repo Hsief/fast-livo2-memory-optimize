@@ -58,6 +58,21 @@ lio:
   max_iterations: 5
   dept_err: 0.02
   beam_err: 0.05
+
+  # Robust hybrid geometry:
+  # 1) planar voxels: original point-to-plane residual + Cauchy
+  # 2) non-planar voxels: covariance-shaped 3D voxel residual
+  #    (line-like covariance behaves close to point-to-line; compact
+  #     covariance behaves close to point-to-point).
+  robust_weight_en: true
+  cauchy_scale: 2.5
+
+  hybrid_geometry_en: true
+  distribution_weight: 0.15
+  distribution_cov_floor: 0.05
+  distribution_max_distance: 0.75
+  distribution_min_points: 5
+
   min_eigen_value: 0.0025 # 0.005
   voxel_size: 0.5
   max_layer: 2
