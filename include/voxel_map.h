@@ -48,6 +48,10 @@ typedef struct VoxelMapConfig
   bool robust_weight_en_;
   double cauchy_scale_;
 
+  bool correction_limit_en_;
+  double max_translation_correction_m_;
+  double max_rotation_correction_deg_;
+
   bool is_pub_plane_map_;
 
   // config of local map sliding
