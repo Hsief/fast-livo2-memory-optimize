@@ -75,6 +75,21 @@ lio:
   incidence_weight_en: false    # reserved for A/B testing; off in v1
   incidence_cos_min: 0.25
 
+  # Directional degeneracy handling.
+  # 1) Hessian subspace ratio proposes weak rotation/translation directions.
+  # 2) X-ICP-style correspondence alignment confirms that the direction really
+  #    lacks geometric support.
+  # 3) Constrained ESIKF prevents LiDAR from pulling the state away from the
+  #    IMU-propagated prior only along confirmed weak directions.
+  localizability_en: true
+  localizability_hessian_ratio: 0.02
+  localizability_enough_contribution: 300.0
+  localizability_strong_contribution: 150.0
+  localizability_min_alignment_deg: 80.0
+  localizability_strong_alignment_deg: 45.0
+  localizability_max_constraints: 6
+  constrained_esikf_en: true
+
   min_eigen_value: 0.0025 # 0.005
   voxel_size: 0.5
   max_layer: 2
