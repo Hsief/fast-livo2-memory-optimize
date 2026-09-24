@@ -56,6 +56,11 @@ typedef struct VoxelMapConfig
   int distribution_min_points_;
   int distribution_max_constraints_;
 
+  bool line_constraint_en_;
+  double line_mid_max_ratio_;
+  double line_weight_;
+  double line_max_distance_;
+
   bool is_pub_plane_map_;
 
   // config of local map sliding
@@ -69,12 +74,15 @@ typedef struct PointToPlane
   Eigen::Vector3d point_b_;
   Eigen::Vector3d point_w_;
   Eigen::Vector3d normal_;
+  Eigen::Vector3d tangent_normal_;
   Eigen::Vector3d center_;
   Eigen::Matrix<double, 6, 6> plane_var_;
   M3D body_cov_;
   int layer_;
   double d_;
   double eigen_value_;
+  double mid_eigen_value_;
+  double max_eigen_value_;
   bool is_valid_;
   float dis_to_plane_;
 } PointToPlane;
