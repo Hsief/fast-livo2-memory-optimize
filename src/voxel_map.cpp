@@ -44,12 +44,12 @@ void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
   nh.param<double>("lio/min_eigen_value", voxel_config.planner_threshold_, 0.01);
   nh.param<double>("lio/sigma_num", voxel_config.sigma_num_, 3);
   nh.param<bool>("lio/robust_weight_en", voxel_config.robust_weight_en_, true);
-  nh.param<double>("lio/huber_delta", voxel_config.huber_delta_, 1.5);
+  nh.param<double>("lio/cauchy_scale", voxel_config.cauchy_scale_, 1.5);
   nh.param<bool>("lio/plane_quality_weight_en", voxel_config.plane_quality_weight_en_, true);
   nh.param<double>("lio/plane_quality_min", voxel_config.plane_quality_min_, 0.35);
   nh.param<bool>("lio/incidence_weight_en", voxel_config.incidence_weight_en_, false);
   nh.param<double>("lio/incidence_cos_min", voxel_config.incidence_cos_min_, 0.25);
-  voxel_config.huber_delta_ = std::max(0.5, voxel_config.huber_delta_);
+  voxel_config.cauchy_scale_ = std::max(0.25, voxel_config.cauchy_scale_);
   voxel_config.plane_quality_min_ =
       std::max(0.05, std::min(1.0, voxel_config.plane_quality_min_));
   voxel_config.incidence_cos_min_ =
@@ -482,11 +482,11 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
         const double normalized_residual =
             std::abs(static_cast<double>(ptpl_list_[i].dis_to_plane_)) /
             std::sqrt(measurement_var);
-        if (normalized_residual > config_setting_.huber_delta_)
-        {
-          obs_weight *=
-              config_setting_.huber_delta_ / std::max(normalized_residual, 1e-9);
-        }
+        const double scaled =
+            normalized_residual / config_setting_.cauchy_scale_;
+        // IRLS weight corresponding to a Cauchy loss:
+        // rho(s) = c^2 * log(1 + s / c^2), s = normalized_residual^2.
+        obs_weight *= 1.0 / (1.0 + scaled * scaled);
       }
 
       if (config_setting_.plane_quality_weight_en_)
