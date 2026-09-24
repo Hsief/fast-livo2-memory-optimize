@@ -41,6 +41,17 @@ void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
   nh.param<double>("lio/voxel_size", voxel_config.max_voxel_size_, 0.5);
   nh.param<double>("lio/min_eigen_value", voxel_config.planner_threshold_, 0.01);
   nh.param<double>("lio/sigma_num", voxel_config.sigma_num_, 3);
+  nh.param<bool>("lio/robust_weight_en", voxel_config.robust_weight_en_, true);
+  nh.param<double>("lio/huber_delta", voxel_config.huber_delta_, 1.5);
+  nh.param<bool>("lio/plane_quality_weight_en", voxel_config.plane_quality_weight_en_, true);
+  nh.param<double>("lio/plane_quality_min", voxel_config.plane_quality_min_, 0.35);
+  nh.param<bool>("lio/incidence_weight_en", voxel_config.incidence_weight_en_, false);
+  nh.param<double>("lio/incidence_cos_min", voxel_config.incidence_cos_min_, 0.25);
+  voxel_config.huber_delta_ = std::max(0.5, voxel_config.huber_delta_);
+  voxel_config.plane_quality_min_ =
+      std::max(0.05, std::min(1.0, voxel_config.plane_quality_min_));
+  voxel_config.incidence_cos_min_ =
+      std::max(0.05, std::min(1.0, voxel_config.incidence_cos_min_));
   nh.param<double>("lio/beam_err", voxel_config.beam_err_, 0.02);
   nh.param<double>("lio/dept_err", voxel_config.dept_err_, 0.05);
   nh.param<vector<int>>("lio/layer_init_num", voxel_config.layer_init_num_, vector<int>{5,5,5,5,5});
@@ -416,7 +427,9 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     MatrixXd Hsub_T_R_inv(6, effct_feat_num_);
     VectorXd R_inv(effct_feat_num_);
     VectorXd meas_vec(effct_feat_num_);
+    VectorXd meas_weight(effct_feat_num_);
     meas_vec.setZero();
+    meas_weight.setOnes();
 #ifdef MP_EN
 #pragma omp parallel for
 #endif
@@ -455,8 +468,50 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
 
       double sigma_l = J_nq * ptpl_list_[i].plane_var_ * J_nq.transpose();
 
-      R_inv(i) = 1.0 / (0.001 + sigma_l + ptpl_list_[i].normal_.transpose() * var * ptpl_list_[i].normal_);
-      // R_inv(i) = 1.0 / (sigma_l + ptpl_list_[i].normal_.transpose() * var * ptpl_list_[i].normal_);
+      const double measurement_var =
+          std::max(1e-9,
+                   0.001 + sigma_l +
+                   (ptpl_list_[i].normal_.transpose() * var * ptpl_list_[i].normal_)(0, 0));
+
+      double obs_weight = 1.0;
+
+      if (config_setting_.robust_weight_en_)
+      {
+        const double normalized_residual =
+            std::abs(static_cast<double>(ptpl_list_[i].dis_to_plane_)) /
+            std::sqrt(measurement_var);
+        if (normalized_residual > config_setting_.huber_delta_)
+        {
+          obs_weight *=
+              config_setting_.huber_delta_ / std::max(normalized_residual, 1e-9);
+        }
+      }
+
+      if (config_setting_.plane_quality_weight_en_)
+      {
+        obs_weight *=
+            std::max(config_setting_.plane_quality_min_,
+                     std::min(1.0, ptpl_list_[i].plane_quality_));
+      }
+
+      if (config_setting_.incidence_weight_en_)
+      {
+        const V3D ray_body = extR_ * point_body + extT_;
+        const V3D ray_world = state_propagat.rot_end * ray_body;
+        const double ray_norm = ray_world.norm();
+        if (ray_norm > 1e-6)
+        {
+          const double cos_incidence =
+              std::abs(ptpl_list_[i].normal_.dot(ray_world / ray_norm));
+          const double incidence_weight =
+              std::max(config_setting_.incidence_cos_min_,
+                       std::min(1.0, cos_incidence));
+          obs_weight *= incidence_weight;
+        }
+      }
+
+      meas_weight(i) = obs_weight;
+      R_inv(i) = obs_weight / measurement_var;
 
       /*** calculate the Measuremnt Jacobian matrix H ***/
       V3D A(point_crossmat * state_.rot_end.transpose() * ptpl_list_[i].normal_);
@@ -473,6 +528,30 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     auto &&HTz = Hsub_T_R_inv * meas_vec;
     // fout_dbg<<"HTz: "<<HTz<<endl;
     H_T_H.block<6, 6>(0, 0) = Hsub_T_R_inv * Hsub;
+
+    if (effct_feat_num_ > 0)
+    {
+      Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 6, 6>> info_es(
+          H_T_H.block<6, 6>(0, 0));
+      if (info_es.info() == Eigen::Success)
+      {
+        const auto eig = info_es.eigenvalues();
+        const double eig_min = std::max(0.0, eig(0));
+        const double eig_max = std::max(eig_min, eig(5));
+        const double condition =
+            eig_max / std::max(1e-9, eig_min);
+        const double mean_weight = meas_weight.mean();
+        int downweighted = 0;
+        for (int wi = 0; wi < meas_weight.size(); ++wi)
+          if (meas_weight(wi) < 0.999) ++downweighted;
+
+        ROS_INFO_THROTTLE(
+            1.0,
+            "[ACC_LIO] effective=%d mean_w=%.3f downweighted=%d eig_min=%.3e eig_max=%.3e cond=%.3e",
+            effct_feat_num_, mean_weight, downweighted,
+            eig_min, eig_max, condition);
+      }
+    }
     // EigenSolver<Matrix<double, 6, 6>> es(H_T_H.block<6,6>(0,0));
     MD(DIM_STATE, DIM_STATE) &&K_1 = (H_T_H.block<DIM_STATE, DIM_STATE>(0, 0) + state_.cov.block<DIM_STATE, DIM_STATE>(0, 0).inverse()).inverse();
     G.block<DIM_STATE, 6>(0, 0) = K_1.block<DIM_STATE, 6>(0, 0) * H_T_H.block<6, 6>(0, 0);
@@ -752,6 +831,13 @@ void VoxelMapManager::build_single_residual(pointWithVar &pv, const VoxelOctoTre
           single_ptpl.center_ = plane.center_;
           single_ptpl.d_ = plane.d_;
           single_ptpl.layer_ = current_layer;
+          single_ptpl.eigen_value_ = plane.min_eigen_value_;
+          const double mid_eig = std::max(1e-9, static_cast<double>(plane.mid_eigen_value_));
+          const double min_eig = std::max(0.0, static_cast<double>(plane.min_eigen_value_));
+          // 1.0 for a very clear plane; approaches 0 when the two smallest
+          // eigenvalues are similar and the local geometry is not strongly planar.
+          single_ptpl.plane_quality_ =
+              std::max(0.0, std::min(1.0, 1.0 - min_eig / mid_eig));
           single_ptpl.dis_to_plane_ = plane.normal_(0) * p_w(0) + plane.normal_(1) * p_w(1) + plane.normal_(2) * p_w(2) + plane.d_;
         }
         return;
