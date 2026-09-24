@@ -95,6 +95,17 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<bool>("evo/pose_output_en", pose_output_en, false);
   nh.param<double>("imu/gyr_cov", gyr_cov, 1.0);
   nh.param<double>("imu/acc_cov", acc_cov, 1.0);
+
+  nh.param<bool>("motion_guard/enabled", motion_guard_en, true);
+  nh.param<double>("motion_guard/max_translation_correction_m",
+                   max_translation_correction_m, 0.15);
+  nh.param<double>("motion_guard/max_rotation_correction_deg",
+                   max_rotation_correction_deg, 5.0);
+  max_translation_correction_m =
+      std::max(0.0, max_translation_correction_m);
+  max_rotation_correction_deg =
+      std::max(0.0, max_rotation_correction_deg);
+
   nh.param<int>("imu/imu_int_frame", imu_int_frame, 3);
   nh.param<bool>("imu/imu_en", imu_en, false);
   nh.param<bool>("imu/gravity_est_en", gravity_est_en, true);
@@ -175,6 +186,11 @@ void LIVMapper::initializeComponents()
   vio_manager->state_propagat = &state_propagat;
   vio_manager->max_iterations = max_iterations;
   vio_manager->img_point_cov = IMG_POINT_COV;
+  vio_manager->motion_guard_en = motion_guard_en;
+  vio_manager->max_translation_correction_m =
+      max_translation_correction_m;
+  vio_manager->max_rotation_correction_deg =
+      max_rotation_correction_deg;
   vio_manager->normal_en = normal_en;
   vio_manager->inverse_composition_en = inverse_composition_en;
   vio_manager->raycast_en = raycast_en;
