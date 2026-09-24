@@ -67,9 +67,9 @@ typedef struct PointToPlane
   M3D body_cov_;
   int layer_;
   double d_;
-  double eigen_value_;
-  double plane_quality_;
-  bool is_valid_;
+  double eigen_value_ = 0.0;
+  double plane_quality_ = 1.0;
+  bool is_valid_ = false;
   float dis_to_plane_;
 } PointToPlane;
 
