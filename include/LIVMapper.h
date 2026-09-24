@@ -107,6 +107,11 @@ public:
 
   double res_mean_last = 0.05;
   double gyr_cov = 0, acc_cov = 0, inv_expo_cov = 0;
+  double gyr_bias_cov = 0.0001, acc_bias_cov = 0.0001;
+  bool imu_init_gyr_bias_from_mean = true;
+  double imu_init_gyr_mean_max = 0.05;
+  double imu_init_gyr_std_max = 0.02;
+  double imu_init_acc_std_ratio_max = 0.03;
   double blind_rgb_points = 0.0;
   double last_timestamp_lidar = -1.0, last_timestamp_imu = -1.0, last_timestamp_img = -1.0;
   double filter_size_surf_min = 0;
