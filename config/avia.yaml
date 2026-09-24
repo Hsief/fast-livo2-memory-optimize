@@ -74,6 +74,14 @@ lio:
   distribution_min_points: 5
   distribution_max_constraints: 500 # hard cap per EKF iteration for NX realtime
 
+  # Line-like voxel completion: when lambda_mid/lambda_max is small, add
+  # the second perpendicular constraint. Together with point-to-plane this
+  # behaves like a conservative point-to-line residual.
+  line_constraint_en: true
+  line_mid_max_ratio: 0.15
+  line_weight: 0.10
+  line_max_distance: 0.30
+
   min_eigen_value: 0.0025 # 0.005
   voxel_size: 0.5
   max_layer: 2
