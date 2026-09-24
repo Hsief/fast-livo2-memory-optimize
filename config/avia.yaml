@@ -68,6 +68,10 @@ local_map:
   half_map_size: 50
   sliding_thresh: 8
 
+gpu:
+  lidar_transform_en: true # CUDA body->world transforms; automatic CPU fallback
+  min_points: 2048 # small clouds stay on CPU to avoid kernel/setup overhead
+
 uav:
   imu_rate_odom: false
   gravity_align_en: false
