@@ -642,11 +642,12 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
 
     ROS_INFO_THROTTLE(
         1.0,
-        "[ROBUST_LIO] plane=%d c=%.2f robust_w=%.3f quality_w=%.3f line_candidates=%zu line_used=%d line_w=%.2f",
+        "[ROBUST_LIO] plane=%d c=%.2f robust_w=%.3f quality_w=%.3f line_candidates=%zu line_used=%d line_robust=%.3f line_w=%.2f",
         effct_feat_num_, config_setting_.cauchy_scale_,
         effct_feat_num_ > 0 ? robust_weights.mean() : 1.0,
         effct_feat_num_ > 0 ? quality_weights.mean() : 1.0,
         line_candidates.size(), line_used,
+        line_used > 0 ? line_robust_sum / line_used : 1.0,
         config_setting_.line_weight_);
 
     EKF_stop_flg = false;
