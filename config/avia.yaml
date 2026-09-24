@@ -58,6 +58,12 @@ lio:
   max_iterations: 5
   dept_err: 0.02
   beam_err: 0.05
+
+  # Robust point-to-plane LIO.  Residuals are normalized by the existing
+  # FAST-LIVO2 point/plane covariance before the Cauchy weight is applied.
+  robust_weight_en: true
+  cauchy_scale: 2.5
+
   min_eigen_value: 0.0025 # 0.005
   voxel_size: 0.5
   max_layer: 2
