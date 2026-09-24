@@ -784,7 +784,8 @@ void VIOManager::retrieveFromVisualSparseMap(cv::Mat img, vector<pointWithVar> &
 void VIOManager::computeJacobianAndUpdateEKF(cv::Mat img)
 {
   if (total_points == 0) return;
-  
+
+  motion_guard_clipped = false;
   compute_jacobian_time = update_ekf_time = 0.0;
 
   for (int level = patch_pyrimid_level - 1; level >= 0; level--)
@@ -797,7 +798,16 @@ void VIOManager::computeJacobianAndUpdateEKF(cv::Mat img)
     else
       updateState(img, level);
   }
-  state->cov -= G * state->cov;
+  if (!motion_guard_clipped)
+  {
+    state->cov -= G * state->cov;
+  }
+  else
+  {
+    ROS_WARN_THROTTLE(
+        1.0,
+        "[MOTION_GUARD_VIO] covariance contraction skipped after clipped update");
+  }
   updateFrameState(*state);
 }
 
@@ -1511,6 +1521,7 @@ void VIOManager::updateStateInverse(cv::Mat img, int level)
             &raw_trans, &raw_rot);
         if (limited)
         {
+          motion_guard_clipped = true;
           ROS_WARN_THROTTLE(
               1.0,
               "[MOTION_GUARD_VIO] clipped correction raw_trans=%.3fm raw_rot=%.2fdeg limits=(%.3fm, %.2fdeg)",
@@ -1698,6 +1709,7 @@ void VIOManager::updateState(cv::Mat img, int level)
             &raw_trans, &raw_rot);
         if (limited)
         {
+          motion_guard_clipped = true;
           ROS_WARN_THROTTLE(
               1.0,
               "[MOTION_GUARD_VIO] clipped correction raw_trans=%.3fm raw_rot=%.2fdeg limits=(%.3fm, %.2fdeg)",
