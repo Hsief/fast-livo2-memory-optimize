@@ -109,6 +109,7 @@ public:
   double img_point_cov, outlier_threshold, ncc_thre;
 
   bool motion_guard_en = true;
+  bool motion_guard_clipped = false;
   double max_translation_correction_m = 0.15;
   double max_rotation_correction_deg = 5.0;
   
