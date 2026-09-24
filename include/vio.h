@@ -107,6 +107,10 @@ public:
   int max_iterations, total_points;
 
   double img_point_cov, outlier_threshold, ncc_thre;
+
+  bool motion_guard_en = true;
+  double max_translation_correction_m = 0.15;
+  double max_rotation_correction_deg = 5.0;
   
   SubSparseMap *visual_submap;
   std::vector<std::vector<V3D>> rays_with_sample_points;
