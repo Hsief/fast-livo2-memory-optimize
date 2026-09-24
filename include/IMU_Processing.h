@@ -41,6 +41,8 @@ public:
   void set_acc_bias_cov(const V3D &b_a);
   void set_inv_expo_cov(const double &inv_expo);
   void set_imu_init_frame_num(const int &num);
+  void set_static_init_gyr_bias(bool enable, double gyr_mean_max,
+                                double gyr_std_max, double acc_std_ratio_max);
   void disable_imu();
   void disable_gravity_est();
   void disable_bias_est();
@@ -77,6 +79,13 @@ private:
   V3D mean_gyr;
   V3D angvel_last;
   V3D acc_s_last;
+  V3D init_acc_m2 = V3D::Zero();
+  V3D init_gyr_m2 = V3D::Zero();
+  size_t init_sample_count = 0;
+  bool init_gyr_bias_from_mean = true;
+  double init_gyr_mean_max = 0.05;
+  double init_gyr_std_max = 0.02;
+  double init_acc_std_ratio_max = 0.03;
   double last_prop_end_time;
   double time_last_scan;
   int init_iter_num = 1, MAX_INI_COUNT = 20;
