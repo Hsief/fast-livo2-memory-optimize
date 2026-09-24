@@ -11,6 +11,7 @@ which is included as part of this source code package.
 */
 
 #include "LIVMapper.h"
+#include "gpu_accel.h"
 #include <sys/stat.h>
 #include <sys/resource.h>
 #include <ros/callback_queue.h>
@@ -144,6 +145,28 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<int>("publish/viz_publish_interval", viz_publish_interval, 3);
   viz_voxel_size = std::max(0.05, viz_voxel_size);
   viz_publish_interval = std::max(1, viz_publish_interval);
+
+  bool gpu_lidar_transform_en = true;
+  int gpu_min_points = 2048;
+  nh.param<bool>("gpu/lidar_transform_en", gpu_lidar_transform_en, true);
+  nh.param<int>("gpu/min_points", gpu_min_points, 2048);
+  const bool gpu_ready =
+      fast_livo_gpu::configure(gpu_lidar_transform_en,
+                               static_cast<size_t>(std::max(1, gpu_min_points)));
+  if (gpu_lidar_transform_en && gpu_ready)
+  {
+    ROS_INFO("[GPU] LiDAR transform enabled on %s, min_points=%d",
+             fast_livo_gpu::deviceName(), gpu_min_points);
+  }
+  else if (gpu_lidar_transform_en)
+  {
+    ROS_WARN("[GPU] CUDA transform unavailable, CPU fallback active: %s",
+             fast_livo_gpu::lastError());
+  }
+  else
+  {
+    ROS_INFO("[GPU] LiDAR transform disabled by config.");
+  }
 
   p_pre->blind_sqr = p_pre->blind * p_pre->blind;
 }
@@ -971,6 +994,39 @@ void LIVMapper::imu_prop_callback(const ros::TimerEvent &e)
 void LIVMapper::transformLidar(const Eigen::Matrix3d rot, const Eigen::Vector3d t, const PointCloudXYZI::Ptr &input_cloud, PointCloudXYZI::Ptr &trans_cloud)
 {
   const size_t n = input_cloud->size();
+
+  float gpu_kernel_ms = 0.0f;
+  double gpu_total_ms = 0.0;
+  if (fast_livo_gpu::transformPointCloud(input_cloud, trans_cloud,
+                                         rot, t, extR, extT,
+                                         &gpu_kernel_ms, &gpu_total_ms))
+  {
+    static bool gpu_validated = false;
+    if (!gpu_validated && n > 0)
+    {
+      double max_xyz_error = 0.0;
+      const size_t step = std::max<size_t>(1, n / 512);
+      for (size_t i = 0; i < n; i += step)
+      {
+        const auto &src = input_cloud->points[i];
+        const Eigen::Vector3d p(src.x, src.y, src.z);
+        const Eigen::Vector3d expected = rot * (extR * p + extT) + t;
+        const auto &got = trans_cloud->points[i];
+        max_xyz_error = std::max(max_xyz_error, std::abs(expected.x() - got.x));
+        max_xyz_error = std::max(max_xyz_error, std::abs(expected.y() - got.y));
+        max_xyz_error = std::max(max_xyz_error, std::abs(expected.z() - got.z));
+      }
+      ROS_INFO("[GPU_VALIDATE] LIVMapper transform max_xyz_error=%.9g over %zu points",
+               max_xyz_error, n);
+      gpu_validated = true;
+    }
+
+    ROS_INFO_THROTTLE(2.0,
+                      "[GPU_LIDAR] LIVMapper n=%zu kernel=%.3fms total=%.3fms",
+                      n, gpu_kernel_ms, gpu_total_ms);
+    return;
+  }
+
   trans_cloud->points.resize(n);
   trans_cloud->width = static_cast<uint32_t>(n);
   trans_cloud->height = 1;
