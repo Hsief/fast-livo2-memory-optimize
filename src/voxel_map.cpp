@@ -58,6 +58,8 @@ void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
                    voxel_config.distribution_max_distance_, 0.75);
   nh.param<int>("lio/distribution_min_points",
                 voxel_config.distribution_min_points_, 5);
+  nh.param<int>("lio/distribution_max_constraints",
+                voxel_config.distribution_max_constraints_, 500);
 
   voxel_config.cauchy_scale_ =
       std::max(0.25, voxel_config.cauchy_scale_);
@@ -69,6 +71,8 @@ void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
       std::max(0.05, voxel_config.distribution_max_distance_);
   voxel_config.distribution_min_points_ =
       std::max(3, voxel_config.distribution_min_points_);
+  voxel_config.distribution_max_constraints_ =
+      std::max(0, voxel_config.distribution_max_constraints_);
 
   nh.param<double>("lio/beam_err", voxel_config.beam_err_, 0.02);
   nh.param<double>("lio/dept_err", voxel_config.dept_err_, 0.05);
@@ -533,8 +537,22 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
           config_setting_.distribution_cov_floor_ *
           config_setting_.distribution_cov_floor_;
 
-      for (const auto &ptd : ptd_list_)
+      const int total_distribution =
+          static_cast<int>(ptd_list_.size());
+      const int max_distribution =
+          config_setting_.distribution_max_constraints_;
+      const int distribution_stride =
+          (max_distribution > 0 && total_distribution > max_distribution)
+              ? static_cast<int>(std::ceil(
+                    static_cast<double>(total_distribution) /
+                    static_cast<double>(max_distribution)))
+              : 1;
+
+      for (int dist_idx = 0;
+           dist_idx < total_distribution;
+           dist_idx += distribution_stride)
       {
+        const auto &ptd = ptd_list_[dist_idx];
         V3D point_this = extR_ * ptd.point_b_ + extT_;
         M3D point_crossmat;
         point_crossmat << SKEW_SYM_MATRX(point_this);
@@ -923,25 +941,6 @@ bool VoxelMapManager::build_distribution_residual(
   const double distance = residual.norm();
   if (!std::isfinite(distance) ||
       distance > config_setting_.distribution_max_distance_)
-    return false;
-
-  const double floor_var =
-      config_setting_.distribution_cov_floor_ *
-      config_setting_.distribution_cov_floor_;
-
-  M3D gate_cov = voxel.covariance_ + pv.var;
-  gate_cov.diagonal().array() += floor_var;
-  gate_cov = 0.5 * (gate_cov + gate_cov.transpose());
-
-  Eigen::LDLT<M3D> ldlt(gate_cov);
-  if (ldlt.info() != Eigen::Success) return false;
-
-  const V3D whitened = ldlt.solve(residual);
-  const double mahal_sq = residual.dot(whitened);
-  const double gate =
-      config_setting_.sigma_num_ * config_setting_.sigma_num_;
-
-  if (!std::isfinite(mahal_sq) || mahal_sq < 0.0 || mahal_sq > gate)
     return false;
 
   single_ptd.point_b_ = pv.point_b;
