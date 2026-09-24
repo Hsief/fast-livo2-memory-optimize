@@ -58,6 +58,16 @@ lio:
   max_iterations: 5
   dept_err: 0.02
   beam_err: 0.05
+
+  # Accuracy experiment: keep the original FAST-LIVO2 state model and
+  # correspondence search, but reduce the influence of marginal observations.
+  robust_weight_en: true
+  huber_delta: 1.5              # normalized residual (sigma units)
+  plane_quality_weight_en: true
+  plane_quality_min: 0.35       # never suppress a valid plane below 35%
+  incidence_weight_en: false    # reserved for A/B testing; off in v1
+  incidence_cos_min: 0.25
+
   min_eigen_value: 0.0025 # 0.005
   voxel_size: 0.5
   max_layer: 2
