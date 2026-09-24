@@ -51,8 +51,15 @@ imu:
   imu_int_frame: 30
   acc_cov: 0.5 # 0.2
   gyr_cov: 0.3 # 0.5
-  b_acc_cov: 0.0001 # 0.1
-  b_gyr_cov: 0.0001 # 0.1
+  b_acc_cov: 0.0001 # accelerometer bias random-walk covariance
+  b_gyr_cov: 0.0001 # gyroscope bias random-walk covariance
+
+  # Safe gyro-bias initialization: use mean gyro only when the startup
+  # interval is detected as approximately stationary.
+  init_gyr_bias_from_mean: true
+  init_gyr_mean_max: 0.05       # rad/s
+  init_gyr_std_max: 0.02        # rad/s
+  init_acc_std_ratio_max: 0.03  # std(acc) / |mean(acc)|, unit-independent
 
 lio:
   max_iterations: 5
