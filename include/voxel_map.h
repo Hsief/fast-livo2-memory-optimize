@@ -43,6 +43,21 @@ typedef struct VoxelMapConfig
   double beam_err_;
   double dept_err_;
   double sigma_num_;
+
+  // Robust point-to-plane weighting; these do not add constraints.
+  bool robust_weight_en_;
+  double cauchy_scale_;
+  bool plane_quality_weight_en_;
+  double plane_quality_min_;
+
+  // Sparse line-completion constraints. Strongly line-like voxels only,
+  // with a strict per-iteration cap for Xavier NX realtime.
+  bool line_constraint_en_;
+  double line_mid_max_ratio_;
+  double line_weight_;
+  double line_max_distance_;
+  int line_max_constraints_;
+
   bool is_pub_plane_map_;
 
   // config of local map sliding
@@ -56,12 +71,16 @@ typedef struct PointToPlane
   Eigen::Vector3d point_b_;
   Eigen::Vector3d point_w_;
   Eigen::Vector3d normal_;
+  Eigen::Vector3d tangent_normal_;
   Eigen::Vector3d center_;
   Eigen::Matrix<double, 6, 6> plane_var_;
   M3D body_cov_;
   int layer_;
   double d_;
   double eigen_value_;
+  double mid_eigen_value_;
+  double max_eigen_value_;
+  double plane_quality_;
   bool is_valid_;
   float dis_to_plane_;
 } PointToPlane;
