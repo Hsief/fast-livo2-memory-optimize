@@ -39,14 +39,14 @@ bool ensureCapacity(std::size_t count)
   g_output = nullptr;
   g_capacity = 0;
 
-  cudaError_t err = cudaMallocManaged(&g_input, new_capacity * sizeof(FastLivoGpuPoint4));
+  cudaError_t err = cudaMallocManaged(reinterpret_cast<void **>(&g_input), new_capacity * sizeof(FastLivoGpuPoint4));
   if (err != cudaSuccess)
   {
     setError("cudaMallocManaged(input)", err);
     return false;
   }
 
-  err = cudaMallocManaged(&g_output, new_capacity * sizeof(FastLivoGpuPoint4));
+  err = cudaMallocManaged(reinterpret_cast<void **>(&g_output), new_capacity * sizeof(FastLivoGpuPoint4));
   if (err != cudaSuccess)
   {
     setError("cudaMallocManaged(output)", err);
