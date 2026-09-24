@@ -11,6 +11,7 @@ which is included as part of this source code package.
 */
 
 #include "voxel_map.h"
+#include "gpu_accel.h"
 
 void calcBodyCov(Eigen::Vector3d &pb, const float range_inc, const float degree_inc, Eigen::Matrix3d &cov)
 {
@@ -523,6 +524,39 @@ void VoxelMapManager::TransformLidar(const Eigen::Matrix3d rot, const Eigen::Vec
                                      pcl::PointCloud<pcl::PointXYZI>::Ptr &trans_cloud)
 {
   const size_t n = input_cloud->size();
+
+  float gpu_kernel_ms = 0.0f;
+  double gpu_total_ms = 0.0;
+  if (fast_livo_gpu::transformPointCloudXYZI(input_cloud, trans_cloud,
+                                             rot, t, extR_, extT_,
+                                             &gpu_kernel_ms, &gpu_total_ms))
+  {
+    static bool gpu_validated = false;
+    if (!gpu_validated && n > 0)
+    {
+      double max_xyz_error = 0.0;
+      const size_t step = std::max<size_t>(1, n / 512);
+      for (size_t i = 0; i < n; i += step)
+      {
+        const auto &src = input_cloud->points[i];
+        const Eigen::Vector3d p(src.x, src.y, src.z);
+        const Eigen::Vector3d expected = rot * (extR_ * p + extT_) + t;
+        const auto &got = trans_cloud->points[i];
+        max_xyz_error = std::max(max_xyz_error, std::abs(expected.x() - got.x));
+        max_xyz_error = std::max(max_xyz_error, std::abs(expected.y() - got.y));
+        max_xyz_error = std::max(max_xyz_error, std::abs(expected.z() - got.z));
+      }
+      ROS_INFO("[GPU_VALIDATE] VoxelMap transform max_xyz_error=%.9g over %zu points",
+               max_xyz_error, n);
+      gpu_validated = true;
+    }
+
+    ROS_INFO_THROTTLE(2.0,
+                      "[GPU_LIDAR] VoxelMap n=%zu kernel=%.3fms total=%.3fms",
+                      n, gpu_kernel_ms, gpu_total_ms);
+    return;
+  }
+
   trans_cloud->points.resize(n);
   trans_cloud->width = static_cast<uint32_t>(n);
   trans_cloud->height = 1;
