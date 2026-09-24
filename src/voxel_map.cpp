@@ -423,10 +423,11 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
       pv.body_var = body_cov_list_[i];
     }
     ptpl_list_.clear();
+    ptd_list_.clear();
 
     // double t1 = omp_get_wtime();
 
-    BuildResidualListOMP(pv_list_, ptpl_list_);
+    BuildResidualListOMP(pv_list_, ptpl_list_, ptd_list_);
 
     // build_residual_time += omp_get_wtime() - t1;
 
@@ -434,18 +435,22 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     {
       total_residual += fabs(ptpl_list_[i].dis_to_plane_);
     }
-    effct_feat_num_ = ptpl_list_.size();
-    ROS_DEBUG("[LIO] raw=%zu down=%d effective=%d avg_residual=%.6f",
+    effct_feat_num_ = static_cast<int>(ptpl_list_.size());
+    distribution_feat_num_ = static_cast<int>(ptd_list_.size());
+    ROS_DEBUG("[LIO] raw=%zu down=%d plane=%d distribution=%d avg_plane_residual=%.6f",
               feats_undistort_->size(), feats_down_size_, effct_feat_num_,
+              distribution_feat_num_,
               effct_feat_num_ > 0 ? total_residual / effct_feat_num_ : 0.0);
 
-    /*** Computation of Measuremnt Jacobian matrix H and measurents covarience
-     * ***/
+    /*** Hybrid geometric measurement information ***/
     MatrixXd Hsub(effct_feat_num_, 6);
     MatrixXd Hsub_T_R_inv(6, effct_feat_num_);
     VectorXd R_inv(effct_feat_num_);
     VectorXd meas_vec(effct_feat_num_);
+    VectorXd plane_robust_weight(effct_feat_num_);
     meas_vec.setZero();
+    plane_robust_weight.setOnes();
+
 #ifdef MP_EN
 #pragma omp parallel for
 #endif
@@ -454,54 +459,163 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
       auto &ptpl = ptpl_list_[i];
       V3D point_this(ptpl.point_b_);
       point_this = extR_ * point_this + extT_;
-      V3D point_body(ptpl.point_b_);
       M3D point_crossmat;
       point_crossmat << SKEW_SYM_MATRX(point_this);
 
-      /*** get the normal vector of closest surface/corner ***/
-
-      V3D point_world = state_propagat.rot_end * point_this + state_propagat.pos_end;
+      V3D point_world =
+          state_propagat.rot_end * point_this + state_propagat.pos_end;
       Eigen::Matrix<double, 1, 6> J_nq;
-      J_nq.block<1, 3>(0, 0) = point_world - ptpl_list_[i].center_;
-      J_nq.block<1, 3>(0, 3) = -ptpl_list_[i].normal_;
+      J_nq.block<1, 3>(0, 0) =
+          point_world - ptpl_list_[i].center_;
+      J_nq.block<1, 3>(0, 3) =
+          -ptpl_list_[i].normal_;
 
-      M3D var;
-      // V3D normal_b = state_.rot_end.inverse() * ptpl_list_[i].normal_;
-      // V3D point_b = ptpl_list_[i].point_b_;
-      // double cos_theta = fabs(normal_b.dot(point_b) / point_b.norm());
-      // ptpl_list_[i].body_cov_ = ptpl_list_[i].body_cov_ * (1.0 / cos_theta) * (1.0 / cos_theta);
+      M3D var =
+          state_propagat.rot_end * extR_ *
+          ptpl_list_[i].body_cov_ *
+          (state_propagat.rot_end * extR_).transpose();
 
-      // point_w cov
-      // var = state_propagat.rot_end * extR_ * ptpl_list_[i].body_cov_ * (state_propagat.rot_end * extR_).transpose() +
-      //       state_propagat.cov.block<3, 3>(3, 3) + (-point_crossmat) * state_propagat.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose();
+      const double sigma_l =
+          (J_nq * ptpl_list_[i].plane_var_ * J_nq.transpose())(0, 0);
+      const double point_var =
+          (ptpl_list_[i].normal_.transpose() * var *
+           ptpl_list_[i].normal_)(0, 0);
+      const double measurement_var =
+          std::max(1e-9, 0.001 + sigma_l + point_var);
 
-      // point_w cov (another_version)
-      // var = state_propagat.rot_end * extR_ * ptpl_list_[i].body_cov_ * (state_propagat.rot_end * extR_).transpose() +
-      //       state_propagat.cov.block<3, 3>(3, 3) - point_crossmat * state_propagat.cov.block<3, 3>(0, 0) * point_crossmat;
+      double robust_weight = 1.0;
+      if (config_setting_.robust_weight_en_)
+      {
+        const double normalized_residual =
+            std::abs(static_cast<double>(
+                ptpl_list_[i].dis_to_plane_)) /
+            std::sqrt(measurement_var);
+        const double scaled =
+            normalized_residual / config_setting_.cauchy_scale_;
+        robust_weight = 1.0 / (1.0 + scaled * scaled);
+      }
+      plane_robust_weight(i) = robust_weight;
+      R_inv(i) = robust_weight / measurement_var;
 
-      // point_body cov
-      var = state_propagat.rot_end * extR_ * ptpl_list_[i].body_cov_ * (state_propagat.rot_end * extR_).transpose();
-
-      double sigma_l = J_nq * ptpl_list_[i].plane_var_ * J_nq.transpose();
-
-      R_inv(i) = 1.0 / (0.001 + sigma_l + ptpl_list_[i].normal_.transpose() * var * ptpl_list_[i].normal_);
-      // R_inv(i) = 1.0 / (sigma_l + ptpl_list_[i].normal_.transpose() * var * ptpl_list_[i].normal_);
-
-      /*** calculate the Measuremnt Jacobian matrix H ***/
-      V3D A(point_crossmat * state_.rot_end.transpose() * ptpl_list_[i].normal_);
-      Hsub.row(i) << VEC_FROM_ARRAY(A), ptpl_list_[i].normal_[0], ptpl_list_[i].normal_[1], ptpl_list_[i].normal_[2];
-      Hsub_T_R_inv.col(i) << A[0] * R_inv(i), A[1] * R_inv(i), A[2] * R_inv(i), ptpl_list_[i].normal_[0] * R_inv(i),
-          ptpl_list_[i].normal_[1] * R_inv(i), ptpl_list_[i].normal_[2] * R_inv(i);
+      V3D A(point_crossmat * state_.rot_end.transpose() *
+            ptpl_list_[i].normal_);
+      Hsub.row(i) << VEC_FROM_ARRAY(A),
+          ptpl_list_[i].normal_[0],
+          ptpl_list_[i].normal_[1],
+          ptpl_list_[i].normal_[2];
+      Hsub_T_R_inv.col(i) <<
+          A[0] * R_inv(i), A[1] * R_inv(i),
+          A[2] * R_inv(i),
+          ptpl_list_[i].normal_[0] * R_inv(i),
+          ptpl_list_[i].normal_[1] * R_inv(i),
+          ptpl_list_[i].normal_[2] * R_inv(i);
       meas_vec(i) = -ptpl_list_[i].dis_to_plane_;
     }
+
+    Eigen::Matrix<double, 6, 6> geometry_info =
+        Eigen::Matrix<double, 6, 6>::Zero();
+    Eigen::Matrix<double, 6, 1> geometry_rhs =
+        Eigen::Matrix<double, 6, 1>::Zero();
+
+    if (effct_feat_num_ > 0)
+    {
+      geometry_info.noalias() += Hsub_T_R_inv * Hsub;
+      geometry_rhs.noalias() += Hsub_T_R_inv * meas_vec;
+    }
+
+    double distribution_weight_sum = 0.0;
+    double distribution_mahal_sum = 0.0;
+    int distribution_used = 0;
+
+    if (config_setting_.hybrid_geometry_en_)
+    {
+      const double floor_var =
+          config_setting_.distribution_cov_floor_ *
+          config_setting_.distribution_cov_floor_;
+
+      for (const auto &ptd : ptd_list_)
+      {
+        V3D point_this = extR_ * ptd.point_b_ + extT_;
+        M3D point_crossmat;
+        point_crossmat << SKEW_SYM_MATRX(point_this);
+
+        const V3D residual = ptd.point_w_ - ptd.center_;
+
+        M3D point_var =
+            state_propagat.rot_end * extR_ *
+            ptd.body_cov_ *
+            (state_propagat.rot_end * extR_).transpose();
+
+        M3D measurement_cov = ptd.voxel_cov_ + point_var;
+        measurement_cov.diagonal().array() += floor_var;
+        measurement_cov =
+            0.5 * (measurement_cov + measurement_cov.transpose());
+
+        Eigen::LDLT<M3D> ldlt(measurement_cov);
+        if (ldlt.info() != Eigen::Success) continue;
+
+        M3D information = ldlt.solve(M3D::Identity());
+        if (!information.allFinite()) continue;
+
+        const double mahal_sq =
+            std::max(0.0, residual.dot(information * residual));
+
+        double robust_weight = 1.0;
+        if (config_setting_.robust_weight_en_)
+        {
+          const double c2 =
+              config_setting_.cauchy_scale_ *
+              config_setting_.cauchy_scale_;
+          robust_weight = 1.0 / (1.0 + mahal_sq / c2);
+        }
+
+        information *=
+            config_setting_.distribution_weight_ * robust_weight;
+
+        Eigen::Matrix<double, 3, 6> J_dist;
+        J_dist.block<3, 3>(0, 0) =
+            -state_.rot_end * point_crossmat;
+        J_dist.block<3, 3>(0, 3) = M3D::Identity();
+
+        geometry_info.noalias() +=
+            J_dist.transpose() * information * J_dist;
+        geometry_rhs.noalias() +=
+            J_dist.transpose() * information * (-residual);
+
+        distribution_weight_sum += robust_weight;
+        distribution_mahal_sum += std::sqrt(mahal_sq);
+        ++distribution_used;
+      }
+    }
+
+    if (config_setting_.robust_weight_en_ ||
+        config_setting_.hybrid_geometry_en_)
+    {
+      const double plane_mean_w =
+          effct_feat_num_ > 0 ? plane_robust_weight.mean() : 1.0;
+      const double dist_mean_w =
+          distribution_used > 0
+              ? distribution_weight_sum / distribution_used
+              : 1.0;
+      const double dist_mean_mahal =
+          distribution_used > 0
+              ? distribution_mahal_sum / distribution_used
+              : 0.0;
+
+      ROS_INFO_THROTTLE(
+          1.0,
+          "[HYBRID_LIO] plane=%d dist=%d c=%.2f plane_w=%.3f dist_w=%.3f dist_mahal=%.2f dist_scale=%.2f",
+          effct_feat_num_, distribution_used,
+          config_setting_.cauchy_scale_,
+          plane_mean_w, dist_mean_w, dist_mean_mahal,
+          config_setting_.distribution_weight_);
+    }
+
     EKF_stop_flg = false;
     flg_EKF_converged = false;
     /*** Iterative Kalman Filter Update ***/
-    MatrixXd K(DIM_STATE, effct_feat_num_);
-    // auto &&Hsub_T = Hsub.transpose();
-    auto &&HTz = Hsub_T_R_inv * meas_vec;
-    // fout_dbg<<"HTz: "<<HTz<<endl;
-    H_T_H.block<6, 6>(0, 0) = Hsub_T_R_inv * Hsub;
+    Eigen::Matrix<double, 6, 1> HTz = geometry_rhs;
+    H_T_H.block<6, 6>(0, 0) = geometry_info;
     // EigenSolver<Matrix<double, 6, 6>> es(H_T_H.block<6,6>(0,0));
     MD(DIM_STATE, DIM_STATE) &&K_1 = (H_T_H.block<DIM_STATE, DIM_STATE>(0, 0) + state_.cov.block<DIM_STATE, DIM_STATE>(0, 0).inverse()).inverse();
     G.block<DIM_STATE, 6>(0, 0) = K_1.block<DIM_STATE, 6>(0, 0) * H_T_H.block<6, 6>(0, 0);
