@@ -13,6 +13,8 @@ which is included as part of this source code package.
 #ifndef COMMON_LIB_H
 #define COMMON_LIB_H
 
+#include <algorithm>
+
 #include <utils/so3_math.h>
 #include <utils/types.h>
 #include <utils/color.h>
