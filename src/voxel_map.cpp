@@ -542,7 +542,7 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
       const bool limited = clampPoseCorrectionToPrior(
           state_, state_propagat, solution,
           config_setting_.max_translation_correction_m_,
-          config_setting_.max_rotation_correction_deg_ * M_PI / 180.0,
+          config_setting_.max_rotation_correction_deg_ * 0.017453292519943295,
           &raw_trans, &raw_rot);
       if (limited)
       {
@@ -550,7 +550,7 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
         ROS_WARN_THROTTLE(
             1.0,
             "[MOTION_GUARD_LIO] clipped correction raw_trans=%.3fm raw_rot=%.2fdeg limits=(%.3fm, %.2fdeg)",
-            raw_trans, raw_rot * 180.0 / M_PI,
+            raw_trans, raw_rot * 57.2957795131,
             config_setting_.max_translation_correction_m_,
             config_setting_.max_rotation_correction_deg_);
       }
