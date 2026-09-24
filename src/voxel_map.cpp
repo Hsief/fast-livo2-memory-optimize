@@ -46,6 +46,18 @@ void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
   nh.param<bool>("lio/robust_weight_en", voxel_config.robust_weight_en_, true);
   nh.param<double>("lio/cauchy_scale", voxel_config.cauchy_scale_, 2.5);
   voxel_config.cauchy_scale_ = std::max(0.25, voxel_config.cauchy_scale_);
+
+  nh.param<bool>("motion_guard/enabled",
+                 voxel_config.correction_limit_en_, true);
+  nh.param<double>("motion_guard/max_translation_correction_m",
+                   voxel_config.max_translation_correction_m_, 0.15);
+  nh.param<double>("motion_guard/max_rotation_correction_deg",
+                   voxel_config.max_rotation_correction_deg_, 5.0);
+  voxel_config.max_translation_correction_m_ =
+      std::max(0.0, voxel_config.max_translation_correction_m_);
+  voxel_config.max_rotation_correction_deg_ =
+      std::max(0.0, voxel_config.max_rotation_correction_deg_);
+
   nh.param<double>("lio/beam_err", voxel_config.beam_err_, 0.02);
   nh.param<double>("lio/dept_err", voxel_config.dept_err_, 0.05);
   nh.param<vector<int>>("lio/layer_init_num", voxel_config.layer_init_num_, vector<int>{5,5,5,5,5});
@@ -521,6 +533,27 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     auto vec = state_propagat - state_;
     VD(DIM_STATE)
     solution = K_1.block<DIM_STATE, 6>(0, 0) * HTz + vec.block<DIM_STATE, 1>(0, 0) - G.block<DIM_STATE, 6>(0, 0) * vec.block<6, 1>(0, 0);
+
+    if (config_setting_.correction_limit_en_)
+    {
+      double raw_trans = 0.0;
+      double raw_rot = 0.0;
+      const bool limited = clampPoseCorrectionToPrior(
+          state_, state_propagat, solution,
+          config_setting_.max_translation_correction_m_,
+          config_setting_.max_rotation_correction_deg_ * M_PI / 180.0,
+          &raw_trans, &raw_rot);
+      if (limited)
+      {
+        ROS_WARN_THROTTLE(
+            1.0,
+            "[MOTION_GUARD_LIO] clipped correction raw_trans=%.3fm raw_rot=%.2fdeg limits=(%.3fm, %.2fdeg)",
+            raw_trans, raw_rot * 180.0 / M_PI,
+            config_setting_.max_translation_correction_m_,
+            config_setting_.max_rotation_correction_deg_);
+      }
+    }
+
     int minRow, minCol;
     state_ += solution;
     auto rot_add = solution.block<3, 1>(0, 0);
