@@ -43,6 +43,12 @@ typedef struct VoxelMapConfig
   double beam_err_;
   double dept_err_;
   double sigma_num_;
+  bool robust_weight_en_;
+  double huber_delta_;
+  bool plane_quality_weight_en_;
+  double plane_quality_min_;
+  bool incidence_weight_en_;
+  double incidence_cos_min_;
   bool is_pub_plane_map_;
 
   // config of local map sliding
@@ -62,6 +68,7 @@ typedef struct PointToPlane
   int layer_;
   double d_;
   double eigen_value_;
+  double plane_quality_;
   bool is_valid_;
   float dis_to_plane_;
 } PointToPlane;
