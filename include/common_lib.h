@@ -259,11 +259,13 @@ inline bool clampPoseCorrectionToPrior(
 
   if (!limited) return false;
 
-  const M3D desired_rot = prior.rot_end * Exp(dtheta);
+  const M3D delta_rot = Exp(dtheta(0), dtheta(1), dtheta(2));
+  const M3D desired_rot = prior.rot_end * delta_rot;
   const V3D desired_pos = prior.pos_end + dpos;
+  const M3D correction_rot =
+      current.rot_end.transpose() * desired_rot;
 
-  solution.block<3, 1>(0, 0) =
-      Log(current.rot_end.transpose() * desired_rot);
+  solution.block<3, 1>(0, 0) = Log(correction_rot);
   solution.block<3, 1>(3, 0) =
       desired_pos - current.pos_end;
   return true;
