@@ -39,6 +39,9 @@ void ImuProcess::Reset()
   mean_acc = V3D(0, 0, -1.0);
   mean_gyr = V3D(0, 0, 0);
   angvel_last = Zero3d;
+  init_acc_m2.setZero();
+  init_gyr_m2.setZero();
+  init_sample_count = 0;
   imu_need_init = true;
   init_iter_num = 1;
   IMUpose.clear();
@@ -101,6 +104,15 @@ void ImuProcess::set_acc_bias_cov(const V3D &b_a) { cov_bias_acc = b_a; }
 
 void ImuProcess::set_imu_init_frame_num(const int &num) { MAX_INI_COUNT = num; }
 
+void ImuProcess::set_static_init_gyr_bias(bool enable, double gyr_mean_max,
+                                          double gyr_std_max, double acc_std_ratio_max)
+{
+  init_gyr_bias_from_mean = enable;
+  init_gyr_mean_max = std::max(1e-4, gyr_mean_max);
+  init_gyr_std_max = std::max(1e-4, gyr_std_max);
+  init_acc_std_ratio_max = std::max(1e-4, acc_std_ratio_max);
+}
+
 void ImuProcess::IMU_init(const MeasureGroup &meas, StatesGroup &state_inout, int &N)
 {
   /** 1. initializing the gravity, gyro bias, acc and gyro covariance
@@ -128,8 +140,17 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, StatesGroup &state_inout, in
     cur_acc << imu_acc.x, imu_acc.y, imu_acc.z;
     cur_gyr << gyr_acc.x, gyr_acc.y, gyr_acc.z;
 
+    const V3D mean_acc_before = mean_acc;
+    const V3D mean_gyr_before = mean_gyr;
+
     mean_acc += (cur_acc - mean_acc) / N;
     mean_gyr += (cur_gyr - mean_gyr) / N;
+
+    // Track startup stability independently from the process-noise parameters.
+    // Welford-style second moments remain valid across multiple initialization batches.
+    init_acc_m2 += (cur_acc - mean_acc_before).cwiseProduct(cur_acc - mean_acc);
+    init_gyr_m2 += (cur_gyr - mean_gyr_before).cwiseProduct(cur_gyr - mean_gyr);
+    ++init_sample_count;
 
     // cov_acc = cov_acc * (N - 1.0) / N + (cur_acc -
     // mean_acc).cwiseProduct(cur_acc - mean_acc) * (N - 1.0) / (N * N); cov_gyr
@@ -143,7 +164,37 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, StatesGroup &state_inout, in
   IMU_mean_acc_norm = mean_acc.norm();
   state_inout.gravity = -mean_acc / mean_acc.norm() * G_m_s2;
   state_inout.rot_end = Eye3d; // Exp(mean_acc.cross(V3D(0, 0, -1 / scale_gravity)));
-  state_inout.bias_g = Zero3d; // mean_gyr;
+
+  bool startup_static = false;
+  double gyr_std_peak = 0.0;
+  double acc_std_ratio = 0.0;
+  if (init_sample_count > 2)
+  {
+    const V3D gyr_var =
+        (init_gyr_m2 / static_cast<double>(init_sample_count - 1)).cwiseMax(0.0);
+    const V3D acc_var =
+        (init_acc_m2 / static_cast<double>(init_sample_count - 1)).cwiseMax(0.0);
+    gyr_std_peak = std::sqrt(gyr_var.maxCoeff());
+    const double acc_std_peak = std::sqrt(acc_var.maxCoeff());
+    acc_std_ratio = acc_std_peak / std::max(1e-6, mean_acc.norm());
+
+    startup_static =
+        mean_gyr.norm() <= init_gyr_mean_max &&
+        gyr_std_peak <= init_gyr_std_max &&
+        acc_std_ratio <= init_acc_std_ratio_max;
+  }
+
+  if (init_gyr_bias_from_mean && startup_static && ba_bg_est_en)
+    state_inout.bias_g = mean_gyr;
+  else
+    state_inout.bias_g = Zero3d;
+
+  ROS_INFO_THROTTLE(
+      1.0,
+      "[ACC_IMU_INIT] samples=%zu static=%d mean_gyr=%.6f gyr_std=%.6f acc_std_ratio=%.6f bg=(%.6f %.6f %.6f)",
+      init_sample_count, startup_static ? 1 : 0, mean_gyr.norm(),
+      gyr_std_peak, acc_std_ratio,
+      state_inout.bias_g.x(), state_inout.bias_g.y(), state_inout.bias_g.z());
 
   last_imu = meas.imu.back();
 }
