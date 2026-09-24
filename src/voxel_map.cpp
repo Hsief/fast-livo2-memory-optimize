@@ -12,6 +12,7 @@ which is included as part of this source code package.
 
 #include "voxel_map.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 void calcBodyCov(Eigen::Vector3d &pb, const float range_inc, const float degree_inc, Eigen::Matrix3d &cov)
@@ -35,6 +36,137 @@ void calcBodyCov(Eigen::Vector3d &pb, const float range_inc, const float degree_
   cov = direction * range_var * direction.transpose() + A * direction_var * A.transpose();
 }
 
+namespace
+{
+struct DirectionalLocalizability
+{
+  std::vector<Eigen::Matrix<double, 1, 6>> weak_rows;
+  std::array<double, 3> rot_ratio{{1.0, 1.0, 1.0}};
+  std::array<double, 3> trans_ratio{{1.0, 1.0, 1.0}};
+  std::array<double, 3> rot_combined{{0.0, 0.0, 0.0}};
+  std::array<double, 3> rot_high{{0.0, 0.0, 0.0}};
+  std::array<double, 3> trans_combined{{0.0, 0.0, 0.0}};
+  std::array<double, 3> trans_high{{0.0, 0.0, 0.0}};
+  std::array<int, 3> rot_weak{{0, 0, 0}};
+  std::array<int, 3> trans_weak{{0, 0, 0}};
+};
+
+DirectionalLocalizability analyzeDirectionalLocalizability(
+    const Eigen::MatrixXd &Hsub,
+    const Eigen::Matrix<double, 6, 6> &lidar_info,
+    const VoxelMapConfig &cfg)
+{
+  DirectionalLocalizability out;
+  if (!cfg.localizability_en_ || Hsub.rows() < 6) return out;
+
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> rot_es(
+      lidar_info.block<3, 3>(0, 0));
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> trans_es(
+      lidar_info.block<3, 3>(3, 3));
+
+  if (rot_es.info() != Eigen::Success || trans_es.info() != Eigen::Success)
+    return out;
+
+  const Eigen::Vector3d rot_eval = rot_es.eigenvalues().cwiseMax(0.0);
+  const Eigen::Vector3d trans_eval = trans_es.eigenvalues().cwiseMax(0.0);
+  const Eigen::Matrix3d rot_evec = rot_es.eigenvectors();
+  const Eigen::Matrix3d trans_evec = trans_es.eigenvectors();
+
+  const double rot_max = std::max(1e-12, rot_eval.maxCoeff());
+  const double trans_max = std::max(1e-12, trans_eval.maxCoeff());
+
+  struct Candidate
+  {
+    Eigen::Matrix<double, 1, 6> row;
+    double severity;
+    bool rotation;
+    int index;
+  };
+  std::vector<Candidate> candidates;
+  candidates.reserve(6);
+
+  for (int j = 0; j < 3; ++j)
+  {
+    out.rot_ratio[j] = rot_eval(j) / rot_max;
+    out.trans_ratio[j] = trans_eval(j) / trans_max;
+
+    for (int i = 0; i < Hsub.rows(); ++i)
+    {
+      Eigen::Vector3d r = Hsub.row(i).head<3>().transpose();
+      const double rn = r.norm();
+      if (rn > 1.0) r /= rn;
+
+      Eigen::Vector3d t = Hsub.row(i).tail<3>().transpose();
+      const double tn = t.norm();
+      if (tn > 1e-12) t /= tn;
+
+      const double r_align = std::abs(r.dot(rot_evec.col(j)));
+      const double t_align = std::abs(t.dot(trans_evec.col(j)));
+
+      if (r_align >= cfg.localizability_min_alignment_cos_)
+        out.rot_combined[j] += r_align;
+      if (r_align >= cfg.localizability_strong_alignment_cos_)
+        out.rot_high[j] += r_align;
+
+      if (t_align >= cfg.localizability_min_alignment_cos_)
+        out.trans_combined[j] += t_align;
+      if (t_align >= cfg.localizability_strong_alignment_cos_)
+        out.trans_high[j] += t_align;
+    }
+
+    const bool rot_hessian_weak =
+        out.rot_ratio[j] < cfg.localizability_hessian_ratio_;
+    const bool rot_corr_weak =
+        out.rot_combined[j] < cfg.localizability_enough_contribution_ &&
+        out.rot_high[j] < cfg.localizability_strong_contribution_;
+
+    if (rot_hessian_weak && rot_corr_weak)
+    {
+      out.rot_weak[j] = 1;
+      Candidate cand;
+      cand.row.setZero();
+      cand.row.block<1, 3>(0, 0) = rot_evec.col(j).transpose();
+      cand.severity = out.rot_ratio[j];
+      cand.rotation = true;
+      cand.index = j;
+      candidates.push_back(cand);
+    }
+
+    const bool trans_hessian_weak =
+        out.trans_ratio[j] < cfg.localizability_hessian_ratio_;
+    const bool trans_corr_weak =
+        out.trans_combined[j] < cfg.localizability_enough_contribution_ &&
+        out.trans_high[j] < cfg.localizability_strong_contribution_;
+
+    if (trans_hessian_weak && trans_corr_weak)
+    {
+      out.trans_weak[j] = 1;
+      Candidate cand;
+      cand.row.setZero();
+      cand.row.block<1, 3>(0, 3) = trans_evec.col(j).transpose();
+      cand.severity = out.trans_ratio[j];
+      cand.rotation = false;
+      cand.index = j;
+      candidates.push_back(cand);
+    }
+  }
+
+  std::sort(candidates.begin(), candidates.end(),
+            [](const Candidate &a, const Candidate &b)
+            {
+              return a.severity < b.severity;
+            });
+
+  const int keep = std::min<int>(
+      std::max(0, cfg.localizability_max_constraints_),
+      static_cast<int>(candidates.size()));
+  out.weak_rows.reserve(keep);
+  for (int i = 0; i < keep; ++i) out.weak_rows.push_back(candidates[i].row);
+
+  return out;
+}
+} // namespace
+
 void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
 {
   nh.param<bool>("publish/pub_plane_en", voxel_config.is_pub_plane_map_, false);
@@ -49,6 +181,40 @@ void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
   nh.param<double>("lio/plane_quality_min", voxel_config.plane_quality_min_, 0.35);
   nh.param<bool>("lio/incidence_weight_en", voxel_config.incidence_weight_en_, false);
   nh.param<double>("lio/incidence_cos_min", voxel_config.incidence_cos_min_, 0.25);
+
+  nh.param<bool>("lio/localizability_en", voxel_config.localizability_en_, true);
+  nh.param<double>("lio/localizability_hessian_ratio",
+                   voxel_config.localizability_hessian_ratio_, 0.02);
+  nh.param<double>("lio/localizability_enough_contribution",
+                   voxel_config.localizability_enough_contribution_, 300.0);
+  nh.param<double>("lio/localizability_strong_contribution",
+                   voxel_config.localizability_strong_contribution_, 150.0);
+  double min_alignment_deg = 80.0;
+  double strong_alignment_deg = 45.0;
+  nh.param<double>("lio/localizability_min_alignment_deg",
+                   min_alignment_deg, 80.0);
+  nh.param<double>("lio/localizability_strong_alignment_deg",
+                   strong_alignment_deg, 45.0);
+  nh.param<int>("lio/localizability_max_constraints",
+                voxel_config.localizability_max_constraints_, 6);
+  nh.param<bool>("lio/constrained_esikf_en",
+                 voxel_config.constrained_esikf_en_, true);
+
+  min_alignment_deg = std::max(0.0, std::min(89.9, min_alignment_deg));
+  strong_alignment_deg = std::max(0.0, std::min(89.9, strong_alignment_deg));
+  voxel_config.localizability_min_alignment_cos_ =
+      std::cos(DEG2RAD(min_alignment_deg));
+  voxel_config.localizability_strong_alignment_cos_ =
+      std::cos(DEG2RAD(strong_alignment_deg));
+  voxel_config.localizability_hessian_ratio_ =
+      std::max(1e-6, std::min(0.5, voxel_config.localizability_hessian_ratio_));
+  voxel_config.localizability_enough_contribution_ =
+      std::max(1.0, voxel_config.localizability_enough_contribution_);
+  voxel_config.localizability_strong_contribution_ =
+      std::max(1.0, voxel_config.localizability_strong_contribution_);
+  voxel_config.localizability_max_constraints_ =
+      std::max(0, std::min(6, voxel_config.localizability_max_constraints_));
+
   voxel_config.cauchy_scale_ = std::max(0.25, voxel_config.cauchy_scale_);
   voxel_config.plane_quality_min_ =
       std::max(0.05, std::min(1.0, voxel_config.plane_quality_min_));
@@ -531,10 +697,16 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     // fout_dbg<<"HTz: "<<HTz<<endl;
     H_T_H.block<6, 6>(0, 0) = Hsub_T_R_inv * Hsub;
 
+    DirectionalLocalizability localizability;
     if (effct_feat_num_ > 0)
     {
+      const Eigen::Matrix<double, 6, 6> lidar_info =
+          H_T_H.block<6, 6>(0, 0);
+      localizability =
+          analyzeDirectionalLocalizability(Hsub, lidar_info, config_setting_);
+
       Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 6, 6>> info_es(
-          H_T_H.block<6, 6>(0, 0));
+          lidar_info);
       if (info_es.info() == Eigen::Success)
       {
         const auto eig = info_es.eigenvalues();
@@ -552,6 +724,28 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
             "[ACC_LIO] effective=%d mean_w=%.3f downweighted=%d eig_min=%.3e eig_max=%.3e cond=%.3e",
             effct_feat_num_, mean_weight, downweighted,
             eig_min, eig_max, condition);
+
+        ROS_INFO_THROTTLE(
+            1.0,
+            "[ACC_LOCAL] constraints=%zu Rweak=%d%d%d Tweak=%d%d%d "
+            "Rratio=(%.3g %.3g %.3g) Tratio=(%.3g %.3g %.3g) "
+            "Rcontrib=(%.1f/%.1f %.1f/%.1f %.1f/%.1f) "
+            "Tcontrib=(%.1f/%.1f %.1f/%.1f %.1f/%.1f)",
+            localizability.weak_rows.size(),
+            localizability.rot_weak[0], localizability.rot_weak[1],
+            localizability.rot_weak[2],
+            localizability.trans_weak[0], localizability.trans_weak[1],
+            localizability.trans_weak[2],
+            localizability.rot_ratio[0], localizability.rot_ratio[1],
+            localizability.rot_ratio[2],
+            localizability.trans_ratio[0], localizability.trans_ratio[1],
+            localizability.trans_ratio[2],
+            localizability.rot_combined[0], localizability.rot_high[0],
+            localizability.rot_combined[1], localizability.rot_high[1],
+            localizability.rot_combined[2], localizability.rot_high[2],
+            localizability.trans_combined[0], localizability.trans_high[0],
+            localizability.trans_combined[1], localizability.trans_high[1],
+            localizability.trans_combined[2], localizability.trans_high[2]);
       }
     }
     // EigenSolver<Matrix<double, 6, 6>> es(H_T_H.block<6,6>(0,0));
@@ -560,6 +754,50 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     auto vec = state_propagat - state_;
     VD(DIM_STATE)
     solution = K_1.block<DIM_STATE, 6>(0, 0) * HTz + vec.block<DIM_STATE, 1>(0, 0) - G.block<DIM_STATE, 6>(0, 0) * vec.block<6, 1>(0, 0);
+
+    if (config_setting_.constrained_esikf_en_ &&
+        !localizability.weak_rows.empty())
+    {
+      const int m = static_cast<int>(localizability.weak_rows.size());
+      Eigen::MatrixXd C = Eigen::MatrixXd::Zero(m, DIM_STATE);
+      for (int r = 0; r < m; ++r)
+        C.block(r, 0, 1, 6) = localizability.weak_rows[r];
+
+      // FAST-LIVO2's iterative solution contains the correction from the
+      // current iterate back toward the IMU-propagated prior (vec).  Therefore
+      // the weak-direction constraint is C*solution = C*vec, not C*solution=0:
+      // LiDAR may not pull the estimate away from the propagation along a
+      // direction that the current geometry cannot observe.
+      const Eigen::VectorXd d =
+          C * vec.block<DIM_STATE, 1>(0, 0);
+      const Eigen::VectorXd violation = C * solution - d;
+
+      const auto prior_cov =
+          state_.cov.block<DIM_STATE, DIM_STATE>(0, 0);
+      Eigen::MatrixXd CPCT = C * prior_cov * C.transpose();
+      CPCT.diagonal().array() += 1e-12;
+
+      Eigen::LDLT<Eigen::MatrixXd> ldlt(CPCT);
+      if (ldlt.info() == Eigen::Success)
+      {
+        const Eigen::MatrixXd constraint_gain =
+            prior_cov * C.transpose() *
+            ldlt.solve(Eigen::MatrixXd::Identity(m, m));
+        solution -= constraint_gain * violation;
+
+        ROS_INFO_THROTTLE(
+            1.0,
+            "[ACC_CESIKF] constrained=%d violation_before=%.3e correction=%.3e",
+            m, violation.norm(), (constraint_gain * violation).norm());
+      }
+      else
+      {
+        ROS_WARN_THROTTLE(
+            1.0,
+            "[ACC_CESIKF] constraint solve failed; using unconstrained LIO update");
+      }
+    }
+
     int minRow, minCol;
     state_ += solution;
     auto rot_add = solution.block<3, 1>(0, 0);
