@@ -54,6 +54,7 @@ typedef struct VoxelMapConfig
   double distribution_cov_floor_;
   double distribution_max_distance_;
   int distribution_min_points_;
+  int distribution_max_constraints_;
 
   bool is_pub_plane_map_;
 
