@@ -54,6 +54,13 @@ imu:
   b_acc_cov: 0.0001 # 0.1
   b_gyr_cov: 0.0001 # 0.1
 
+motion_guard:
+  enabled: true
+  # Handheld prior: limit only the optimizer correction relative to the
+  # IMU-propagated pose. Real motion predicted by IMU is not clipped.
+  max_translation_correction_m: 0.15
+  max_rotation_correction_deg: 5.0
+
 lio:
   max_iterations: 5
   dept_err: 0.02
