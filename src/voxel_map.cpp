@@ -11,6 +11,8 @@ which is included as part of this source code package.
 */
 
 #include "voxel_map.h"
+#include <algorithm>
+#include <cmath>
 
 void calcBodyCov(Eigen::Vector3d &pb, const float range_inc, const float degree_inc, Eigen::Matrix3d &cov)
 {
@@ -41,6 +43,33 @@ void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
   nh.param<double>("lio/voxel_size", voxel_config.max_voxel_size_, 0.5);
   nh.param<double>("lio/min_eigen_value", voxel_config.planner_threshold_, 0.01);
   nh.param<double>("lio/sigma_num", voxel_config.sigma_num_, 3);
+
+  nh.param<bool>("lio/robust_weight_en",
+                 voxel_config.robust_weight_en_, true);
+  nh.param<double>("lio/cauchy_scale",
+                   voxel_config.cauchy_scale_, 2.5);
+  nh.param<bool>("lio/hybrid_geometry_en",
+                 voxel_config.hybrid_geometry_en_, true);
+  nh.param<double>("lio/distribution_weight",
+                   voxel_config.distribution_weight_, 0.15);
+  nh.param<double>("lio/distribution_cov_floor",
+                   voxel_config.distribution_cov_floor_, 0.05);
+  nh.param<double>("lio/distribution_max_distance",
+                   voxel_config.distribution_max_distance_, 0.75);
+  nh.param<int>("lio/distribution_min_points",
+                voxel_config.distribution_min_points_, 5);
+
+  voxel_config.cauchy_scale_ =
+      std::max(0.25, voxel_config.cauchy_scale_);
+  voxel_config.distribution_weight_ =
+      std::max(0.0, std::min(1.0, voxel_config.distribution_weight_));
+  voxel_config.distribution_cov_floor_ =
+      std::max(0.005, voxel_config.distribution_cov_floor_);
+  voxel_config.distribution_max_distance_ =
+      std::max(0.05, voxel_config.distribution_max_distance_);
+  voxel_config.distribution_min_points_ =
+      std::max(3, voxel_config.distribution_min_points_);
+
   nh.param<double>("lio/beam_err", voxel_config.beam_err_, 0.02);
   nh.param<double>("lio/dept_err", voxel_config.dept_err_, 0.05);
   nh.param<vector<int>>("lio/layer_init_num", voxel_config.layer_init_num_, vector<int>{5,5,5,5,5});
@@ -655,16 +684,20 @@ void VoxelMapManager::UpdateVoxelMap(const std::vector<pointWithVar> &input_poin
   }
 }
 
-void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, std::vector<PointToPlane> &ptpl_list)
+void VoxelMapManager::BuildResidualListOMP(
+    std::vector<pointWithVar> &pv_list,
+    std::vector<PointToPlane> &ptpl_list,
+    std::vector<PointToDistribution> &ptd_list)
 {
-  int max_layer = config_setting_.max_layer_;
   double voxel_size = config_setting_.max_voxel_size_;
-  double sigma_num = config_setting_.sigma_num_;
   ptpl_list.clear();
+  ptd_list.clear();
   std::vector<PointToPlane> all_ptpl_list(pv_list.size());
+  std::vector<PointToDistribution> all_ptd_list(pv_list.size());
   // One byte per point: each OpenMP iteration owns index i, so there is no
   // shared write and no mutex is required. Final ptpl order stays unchanged.
   std::vector<uint8_t> useful_ptpl(pv_list.size(), 0);
+  std::vector<uint8_t> useful_ptd(pv_list.size(), 0);
   #ifdef MP_EN
     omp_set_num_threads(MP_PROC_NUM);
     #pragma omp parallel for
@@ -704,12 +737,106 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
         useful_ptpl[i] = 1;
         all_ptpl_list[i] = single_ptpl;
       }
+      else if (config_setting_.hybrid_geometry_en_)
+      {
+        PointToDistribution single_ptd;
+        bool dist_ok =
+            build_distribution_residual(pv, current_octo, single_ptd);
+
+        if (!dist_ok)
+        {
+          VOXEL_LOCATION near_position = position;
+          if (loc_xyz[0] > (current_octo->voxel_center_[0] +
+                            current_octo->quater_length_))
+            near_position.x += 1;
+          else if (loc_xyz[0] < (current_octo->voxel_center_[0] -
+                                 current_octo->quater_length_))
+            near_position.x -= 1;
+
+          if (loc_xyz[1] > (current_octo->voxel_center_[1] +
+                            current_octo->quater_length_))
+            near_position.y += 1;
+          else if (loc_xyz[1] < (current_octo->voxel_center_[1] -
+                                 current_octo->quater_length_))
+            near_position.y -= 1;
+
+          if (loc_xyz[2] > (current_octo->voxel_center_[2] +
+                            current_octo->quater_length_))
+            near_position.z += 1;
+          else if (loc_xyz[2] < (current_octo->voxel_center_[2] -
+                                 current_octo->quater_length_))
+            near_position.z -= 1;
+
+          auto iter_near = voxel_map_.find(near_position);
+          if (iter_near != voxel_map_.end())
+            dist_ok = build_distribution_residual(
+                pv, iter_near->second, single_ptd);
+        }
+
+        if (dist_ok)
+        {
+          useful_ptd[i] = 1;
+          all_ptd_list[i] = single_ptd;
+        }
+      }
     }
   }
   for (size_t i = 0; i < useful_ptpl.size(); i++)
   {
-    if (useful_ptpl[i]) { ptpl_list.push_back(all_ptpl_list[i]); }
+    if (useful_ptpl[i]) ptpl_list.push_back(all_ptpl_list[i]);
+    if (useful_ptd[i]) ptd_list.push_back(all_ptd_list[i]);
   }
+}
+
+bool VoxelMapManager::build_distribution_residual(
+    pointWithVar &pv, VoxelOctoTree *current_octo,
+    PointToDistribution &single_ptd)
+{
+  if (current_octo == nullptr) return false;
+
+  VoxelOctoTree *leaf = current_octo->find_correspond(pv.point_w);
+  if (leaf == nullptr || leaf->plane_ptr_ == nullptr) return false;
+
+  const VoxelPlane &voxel = *leaf->plane_ptr_;
+
+  // The planar case is already handled by the stronger point-to-plane term.
+  // This fallback is only for geometry that FAST-LIVO2 would otherwise drop.
+  if (voxel.is_plane_) return false;
+  if (voxel.points_size_ < config_setting_.distribution_min_points_)
+    return false;
+
+  const V3D residual = pv.point_w - voxel.center_;
+  const double distance = residual.norm();
+  if (!std::isfinite(distance) ||
+      distance > config_setting_.distribution_max_distance_)
+    return false;
+
+  const double floor_var =
+      config_setting_.distribution_cov_floor_ *
+      config_setting_.distribution_cov_floor_;
+
+  M3D gate_cov = voxel.covariance_ + pv.var;
+  gate_cov.diagonal().array() += floor_var;
+  gate_cov = 0.5 * (gate_cov + gate_cov.transpose());
+
+  Eigen::LDLT<M3D> ldlt(gate_cov);
+  if (ldlt.info() != Eigen::Success) return false;
+
+  const V3D whitened = ldlt.solve(residual);
+  const double mahal_sq = residual.dot(whitened);
+  const double gate =
+      config_setting_.sigma_num_ * config_setting_.sigma_num_;
+
+  if (!std::isfinite(mahal_sq) || mahal_sq < 0.0 || mahal_sq > gate)
+    return false;
+
+  single_ptd.point_b_ = pv.point_b;
+  single_ptd.point_w_ = pv.point_w;
+  single_ptd.center_ = voxel.center_;
+  single_ptd.voxel_cov_ = voxel.covariance_;
+  single_ptd.body_cov_ = pv.body_var;
+  single_ptd.layer_ = leaf->layer_;
+  return true;
 }
 
 void VoxelMapManager::build_single_residual(pointWithVar &pv, const VoxelOctoTree *current_octo, const int current_layer, bool &is_sucess,
