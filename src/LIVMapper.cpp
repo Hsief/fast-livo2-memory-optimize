@@ -122,7 +122,7 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   background_pcd_voxel_size = std::max(0.20, filter_size_pcd);
   nh.param<int>("pcd_save/max_points_per_voxel", background_pcd_max_points_per_voxel, 10);
   background_pcd_max_points_per_voxel =
-      std::max(1, std::min(BACKGROUND_VOXEL_CAPACITY, background_pcd_max_points_per_voxel));
+      std::max(1, std::min(static_cast<int>(BACKGROUND_VOXEL_CAPACITY), background_pcd_max_points_per_voxel));
   if (pcd_save_en && pcd_save_interval < 0)
   {
     ROS_WARN("Background PCD export: interval=-1 changed to 50-frame chunks. "
