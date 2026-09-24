@@ -388,6 +388,7 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
   I_STATE.setIdentity();
 
   bool flg_EKF_inited, flg_EKF_converged, EKF_stop_flg = 0;
+  bool motion_guard_clipped_any = false;
   for (int iterCount = 0; iterCount < config_setting_.max_iterations_; iterCount++)
   {
     double total_residual = 0.0;
@@ -545,6 +546,7 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
           &raw_trans, &raw_rot);
       if (limited)
       {
+        motion_guard_clipped_any = true;
         ROS_WARN_THROTTLE(
             1.0,
             "[MOTION_GUARD_LIO] clipped correction raw_trans=%.3fm raw_rot=%.2fdeg limits=(%.3fm, %.2fdeg)",
@@ -570,8 +572,19 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     {
       /*** Covariance Update ***/
       // _state.cov = (I_STATE - G) * _state.cov;
-      state_.cov.block<DIM_STATE, DIM_STATE>(0, 0) =
-          (I_STATE.block<DIM_STATE, DIM_STATE>(0, 0) - G.block<DIM_STATE, DIM_STATE>(0, 0)) * state_.cov.block<DIM_STATE, DIM_STATE>(0, 0);
+      if (!motion_guard_clipped_any)
+      {
+        state_.cov.block<DIM_STATE, DIM_STATE>(0, 0) =
+            (I_STATE.block<DIM_STATE, DIM_STATE>(0, 0) -
+             G.block<DIM_STATE, DIM_STATE>(0, 0)) *
+            state_.cov.block<DIM_STATE, DIM_STATE>(0, 0);
+      }
+      else
+      {
+        ROS_WARN_THROTTLE(
+            1.0,
+            "[MOTION_GUARD_LIO] covariance contraction skipped after clipped update");
+      }
       // total_distance += (_state.pos_end - position_last).norm();
       position_last_ = state_.pos_end;
       geoQuat_ = tf::createQuaternionMsgFromRollPitchYaw(euler_cur(0), euler_cur(1), euler_cur(2));
