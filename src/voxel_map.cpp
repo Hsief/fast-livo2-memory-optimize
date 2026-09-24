@@ -11,6 +11,8 @@ which is included as part of this source code package.
 */
 
 #include "voxel_map.h"
+#include <algorithm>
+#include <cmath>
 
 void calcBodyCov(Eigen::Vector3d &pb, const float range_inc, const float degree_inc, Eigen::Matrix3d &cov)
 {
