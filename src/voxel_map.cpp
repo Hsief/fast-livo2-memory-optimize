@@ -44,7 +44,7 @@ void loadVoxelConfig(ros::NodeHandle &nh, VoxelMapConfig &voxel_config)
   nh.param<double>("lio/min_eigen_value", voxel_config.planner_threshold_, 0.01);
   nh.param<double>("lio/sigma_num", voxel_config.sigma_num_, 3);
   nh.param<bool>("lio/robust_weight_en", voxel_config.robust_weight_en_, true);
-  nh.param<double>("lio/cauchy_scale", voxel_config.cauchy_scale_, 1.5);
+  nh.param<double>("lio/cauchy_scale", voxel_config.cauchy_scale_, 2.5);
   nh.param<bool>("lio/plane_quality_weight_en", voxel_config.plane_quality_weight_en_, true);
   nh.param<double>("lio/plane_quality_min", voxel_config.plane_quality_min_, 0.35);
   nh.param<bool>("lio/incidence_weight_en", voxel_config.incidence_weight_en_, false);
