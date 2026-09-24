@@ -58,6 +58,22 @@ lio:
   max_iterations: 5
   dept_err: 0.02
   beam_err: 0.05
+
+  # Main LIO stays point-to-plane. Robustness is improved mostly by weights,
+  # not by adding many new residuals.
+  robust_weight_en: true
+  cauchy_scale: 2.5
+  plane_quality_weight_en: true
+  plane_quality_min: 0.55
+
+  # Sparse geometric completion for very strongly line-like voxels only.
+  # At most 64 extra scalar constraints are added per EKF iteration.
+  line_constraint_en: true
+  line_mid_max_ratio: 0.08
+  line_weight: 0.05
+  line_max_distance: 0.20
+  line_max_constraints: 64
+
   min_eigen_value: 0.0025 # 0.005
   voxel_size: 0.5
   max_layer: 2
