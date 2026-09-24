@@ -95,6 +95,17 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<bool>("evo/pose_output_en", pose_output_en, false);
   nh.param<double>("imu/gyr_cov", gyr_cov, 1.0);
   nh.param<double>("imu/acc_cov", acc_cov, 1.0);
+  nh.param<double>("imu/b_gyr_cov", gyr_bias_cov, 0.0001);
+  nh.param<double>("imu/b_acc_cov", acc_bias_cov, 0.0001);
+  nh.param<bool>("imu/init_gyr_bias_from_mean", imu_init_gyr_bias_from_mean, true);
+  nh.param<double>("imu/init_gyr_mean_max", imu_init_gyr_mean_max, 0.05);
+  nh.param<double>("imu/init_gyr_std_max", imu_init_gyr_std_max, 0.02);
+  nh.param<double>("imu/init_acc_std_ratio_max", imu_init_acc_std_ratio_max, 0.03);
+  gyr_bias_cov = std::max(1e-12, gyr_bias_cov);
+  acc_bias_cov = std::max(1e-12, acc_bias_cov);
+  imu_init_gyr_mean_max = std::max(1e-4, imu_init_gyr_mean_max);
+  imu_init_gyr_std_max = std::max(1e-4, imu_init_gyr_std_max);
+  imu_init_acc_std_ratio_max = std::max(1e-4, imu_init_acc_std_ratio_max);
   nh.param<int>("imu/imu_int_frame", imu_int_frame, 3);
   nh.param<bool>("imu/imu_en", imu_en, false);
   nh.param<bool>("imu/gravity_est_en", gravity_est_en, true);
@@ -189,9 +200,13 @@ void LIVMapper::initializeComponents()
   p_imu->set_gyr_cov_scale(V3D(gyr_cov, gyr_cov, gyr_cov));
   p_imu->set_acc_cov_scale(V3D(acc_cov, acc_cov, acc_cov));
   p_imu->set_inv_expo_cov(inv_expo_cov);
-  p_imu->set_gyr_bias_cov(V3D(0.0001, 0.0001, 0.0001));
-  p_imu->set_acc_bias_cov(V3D(0.0001, 0.0001, 0.0001));
+  p_imu->set_gyr_bias_cov(V3D(gyr_bias_cov, gyr_bias_cov, gyr_bias_cov));
+  p_imu->set_acc_bias_cov(V3D(acc_bias_cov, acc_bias_cov, acc_bias_cov));
   p_imu->set_imu_init_frame_num(imu_int_frame);
+  p_imu->set_static_init_gyr_bias(imu_init_gyr_bias_from_mean,
+                                  imu_init_gyr_mean_max,
+                                  imu_init_gyr_std_max,
+                                  imu_init_acc_std_ratio_max);
 
   if (!imu_en) p_imu->disable_imu();
   if (!gravity_est_en) p_imu->disable_gravity_est();
