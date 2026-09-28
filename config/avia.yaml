@@ -69,6 +69,23 @@ local_map:
   half_map_size: 50
   sliding_thresh: 8
 
+# Realtime keyframe scheduler.
+# LiDAR/image use bounded latest-wins candidate buffers. IMU is NOT thinned:
+# all IMU samples between consecutive accepted estimator timestamps are kept
+# and propagated by the original FAST-LIVO2 IMU model.
+keyframe:
+  realtime_en: true
+  lidar_buffer_max: 3
+  image_buffer_max: 3
+
+  # Voxel map insertion keyframe conditions (OR relationship).
+  map_translation_m: 0.10
+  map_rotation_deg: 3.0
+  map_max_interval_s: 0.30
+
+  # Skip expensive RGB/RViz/PCD projection for non-map-keyframes.
+  publish_only_keyframes: true
+
 uav:
   imu_rate_odom: false
   gravity_align_en: false
