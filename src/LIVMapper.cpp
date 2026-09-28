@@ -1284,19 +1284,33 @@ void LIVMapper::img_cbk(const sensor_msgs::ImageConstPtr &msg_in)
 bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
 {
   std::lock_guard<std::mutex> sensor_lock(mtx_buffer);
-  if (lid_raw_data_buffer.empty() && lidar_en) return false;
-  if (img_buffer.empty() && img_en) return false;
+  if (lid_raw_data_buffer.empty() && lidar_en &&
+      !(keyframe_realtime_en && meas.lio_vio_flg == LIO))
+    return false;
+  if (img_en && img_buffer.empty() &&
+      !(keyframe_realtime_en && pending_keyframe_img_valid &&
+        meas.lio_vio_flg == LIO))
+    return false;
   if (imu_buffer.empty() && imu_en) return false;
 
   switch (slam_mode_)
   {
   case ONLY_LIO:
   {
+    if (keyframe_realtime_en && !lidar_pushed)
+    {
+      while (lid_raw_data_buffer.size() > 1)
+      {
+        lid_raw_data_buffer.pop_front();
+        lid_header_time_buffer.pop_front();
+        ++keyframe_dropped_lidar;
+      }
+    }
     if (meas.last_lio_update_time < 0.0) meas.last_lio_update_time = lid_header_time_buffer.front();
     if (!lidar_pushed)
     {
-      // If not push the lidar into measurement data buffer
-      meas.lidar = lid_raw_data_buffer.front(); // push the first lidar topic
+      // Latest-wins LiDAR candidate; IMU history remains continuous.
+      meas.lidar = lid_raw_data_buffer.front();
       if (meas.lidar->points.size() <= 1) return false;
 
       meas.lidar_frame_beg_time = lid_header_time_buffer.front();                                                // generate lidar_frame_beg_time
@@ -1347,24 +1361,77 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
     case WAIT:
     case VIO:
     {
-      // printf("!!! meas.lio_vio_flg: %d \n", meas.lio_vio_flg);
-      double img_capture_time = img_time_buffer.front() + exposure_time_init;
-      /*** has img topic, but img topic timestamp larger than lidar end time,
-       * process lidar topic. After LIO update, the meas.lidar_frame_end_time
-       * will be refresh. ***/
-      if (meas.last_lio_update_time < 0.0) meas.last_lio_update_time = lid_header_time_buffer.front();
-      // printf("[ Data Cut ] wait \n");
-      // printf("[ Data Cut ] last_lio_update_time: %lf \n",
-      // meas.last_lio_update_time);
+      /*** Realtime keyframe scheduling:
+       * choose the newest image timestamp already covered by both LiDAR and
+       * IMU. Older image candidates are discarded instead of being replayed.
+       * The chosen image is moved to a reserved slot so callback-side buffer
+       * trimming cannot invalidate the following VIO update. ***/
+      if (meas.last_lio_update_time < 0.0)
+        meas.last_lio_update_time = lid_header_time_buffer.front();
 
-      double lid_newest_time = lid_header_time_buffer.back() + lid_raw_data_buffer.back()->points.back().curvature / double(1000);
-      double imu_newest_time = imu_buffer.back()->header.stamp.toSec();
+      const double lid_newest_time =
+          lid_header_time_buffer.back() +
+          lid_raw_data_buffer.back()->points.back().curvature / double(1000);
+      const double imu_newest_time = imu_buffer.back()->header.stamp.toSec();
+
+      if (keyframe_realtime_en)
+      {
+        int latest_ready = -1;
+        for (int i = 0; i < static_cast<int>(img_time_buffer.size()); ++i)
+        {
+          const double t = img_time_buffer[i] + exposure_time_init;
+          if (t > meas.last_lio_update_time + 0.00001 &&
+              t <= lid_newest_time &&
+              t <= imu_newest_time)
+            latest_ready = i;
+        }
+
+        if (latest_ready < 0)
+        {
+          while (!img_time_buffer.empty() &&
+                 img_time_buffer.front() + exposure_time_init <=
+                     meas.last_lio_update_time + 0.00001)
+          {
+            img_time_buffer.pop_front();
+            img_buffer.pop_front();
+            ++keyframe_dropped_image;
+          }
+          return false;
+        }
+
+        for (int i = 0; i < latest_ready; ++i)
+        {
+          img_time_buffer.pop_front();
+          img_buffer.pop_front();
+          ++keyframe_dropped_image;
+        }
+
+        pending_keyframe_img = img_buffer.front();
+        pending_keyframe_img_time = img_time_buffer.front();
+        pending_keyframe_img_valid = true;
+        img_buffer.pop_front();
+        img_time_buffer.pop_front();
+      }
+
+      const double img_capture_time =
+          (keyframe_realtime_en ? pending_keyframe_img_time
+                                : img_time_buffer.front()) +
+          exposure_time_init;
 
       if (img_capture_time < meas.last_lio_update_time + 0.00001)
       {
-        img_buffer.pop_front();
-        img_time_buffer.pop_front();
-        ROS_ERROR("[ Data Cut ] Throw one image frame! \n");
+        if (!keyframe_realtime_en)
+        {
+          img_buffer.pop_front();
+          img_time_buffer.pop_front();
+        }
+        else
+        {
+          pending_keyframe_img.release();
+          pending_keyframe_img_valid = false;
+          pending_keyframe_img_time = -1.0;
+        }
+        ROS_WARN_THROTTLE(2.0, "[KEYFRAME] stale synchronized image discarded");
         return false;
       }
 
@@ -1439,16 +1506,21 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
 
     case LIO:
     {
-      double img_capture_time = img_time_buffer.front() + exposure_time_init;
+      if (keyframe_realtime_en && !pending_keyframe_img_valid)
+        return false;
+
+      const double img_capture_time =
+          (keyframe_realtime_en ? pending_keyframe_img_time
+                                : img_time_buffer.front()) +
+          exposure_time_init;
       meas.lio_vio_flg = VIO;
-      // printf("[ Data Cut ] VIO \n");
       meas.measures.clear();
-      double imu_time = imu_buffer.front()->header.stamp.toSec();
 
       struct MeasureGroup m;
       m.vio_time = img_capture_time;
       m.lio_time = meas.last_lio_update_time;
-      m.img = img_buffer.front();
+      m.img = keyframe_realtime_en ? pending_keyframe_img
+                                   : img_buffer.front();
         // while ((!imu_buffer.empty() && (imu_time < img_capture_time)))
       // {
       //   imu_time = imu_buffer.front()->header.stamp.toSec();
@@ -1458,9 +1530,18 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
       //   printf("[ Data Cut ] imu time: %lf \n",
       //   imu_buffer.front()->header.stamp.toSec());
       // }
-      img_buffer.pop_front();
-      img_time_buffer.pop_front();
-          meas.measures.push_back(m);
+      if (keyframe_realtime_en)
+      {
+        pending_keyframe_img.release();
+        pending_keyframe_img_valid = false;
+        pending_keyframe_img_time = -1.0;
+      }
+      else
+      {
+        img_buffer.pop_front();
+        img_time_buffer.pop_front();
+      }
+      meas.measures.push_back(m);
       lidar_pushed = false; // after VIO update, the _lidar_frame_end_time will be refresh.
       // printf("[ Data Cut ] VIO process time: %lf \n", omp_get_wtime() - t0);
       return true;
