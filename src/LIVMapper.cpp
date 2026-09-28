@@ -1469,6 +1469,7 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
         {
           const double t = img_time_buffer[i] + exposure_time_init;
           if (t > meas.last_lio_update_time + 0.00001 &&
+              t >= lid_header_time_buffer.front() &&
               t <= lid_newest_time &&
               t <= imu_newest_time)
             latest_ready = i;
@@ -1499,6 +1500,20 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
         pending_keyframe_img_valid = true;
         img_buffer.pop_front();
         img_time_buffer.pop_front();
+
+        ROS_INFO_THROTTLE(
+            1.0,
+            "[KF_SCHED] target=%.6f newest_lidar=%.6f newest_imu=%.6f lag_lidar=%.3fs lidar_buf=%zu img_buf=%zu imu_buf=%zu dropped_lidar=%llu dropped_img=%llu",
+            pending_keyframe_img_time + exposure_time_init,
+            lid_newest_time, imu_newest_time,
+            std::max(0.0,
+                     lid_newest_time -
+                         (pending_keyframe_img_time + exposure_time_init)),
+            lid_raw_data_buffer.size(),
+            img_buffer.size(),
+            imu_buffer.size(),
+            static_cast<unsigned long long>(keyframe_dropped_lidar.load()),
+            static_cast<unsigned long long>(keyframe_dropped_image.load()));
       }
 
       const double img_capture_time =
