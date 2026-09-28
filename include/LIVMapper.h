@@ -69,6 +69,9 @@ public:
   void watchdogLoop();
   
   bool sync_packages(LidarMeasureGroup &meas);
+  bool shouldInsertMapKeyframe(double update_time, double *trans_m = nullptr,
+                               double *rot_deg = nullptr);
+  void trimRealtimeBuffersLocked();
   void prop_imu_once(StatesGroup &imu_prop_state, const double dt, V3D acc_avr, V3D angvel_avr);
   void imu_prop_callback(const ros::TimerEvent &e);
   void transformLidar(const Eigen::Matrix3d rot, const Eigen::Vector3d t, const PointCloudXYZI::Ptr &input_cloud, PointCloudXYZI::Ptr &trans_cloud);
@@ -182,6 +185,24 @@ public:
 
   double viz_voxel_size = 0.25;
   int viz_publish_interval = 3;
+
+  // Realtime keyframe scheduler. LiDAR/image work is bounded while IMU is
+  // always kept continuous so the next accepted LiDAR frame is propagated
+  // through the full time gap.
+  bool keyframe_realtime_en = false;
+  int keyframe_lidar_buffer_max = 1;
+  int keyframe_image_buffer_max = 2;
+  double keyframe_map_translation_m = 0.10;
+  double keyframe_map_rotation_deg = 3.0;
+  double keyframe_map_max_interval_s = 0.30;
+  std::atomic<bool> keyframe_estimator_busy{false};
+  std::atomic<unsigned long long> keyframe_dropped_lidar{0};
+  std::atomic<unsigned long long> keyframe_dropped_images{0};
+  std::atomic<unsigned long long> keyframe_map_insertions{0};
+  std::atomic<unsigned long long> keyframe_map_skips{0};
+  bool map_keyframe_initialized = false;
+  StatesGroup last_map_keyframe_state;
+  double last_map_keyframe_time = -1.0;
 
   std::thread watchdog_thread;
   std::atomic<bool> watchdog_stop{false};
