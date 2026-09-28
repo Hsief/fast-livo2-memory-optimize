@@ -39,6 +39,7 @@ public:
   void handleLIO();
   void savePCD();
   void processImu();
+  bool shouldInsertMapKeyframe(double stamp);
 
   struct BackgroundPcdJob
   {
@@ -135,6 +136,24 @@ public:
 
   bool lidar_pushed = false, imu_en, gravity_est_en, flg_reset = false, ba_bg_est_en = true;
   bool dense_map_en = false;
+
+  // Realtime keyframe scheduler. LiDAR/image candidate buffers are bounded
+  // and latest-wins; IMU remains continuous between accepted estimator times.
+  bool keyframe_realtime_en = true;
+  int keyframe_lidar_buffer_max = 3;
+  int keyframe_image_buffer_max = 3;
+  double keyframe_map_translation_m = 0.10;
+  double keyframe_map_rotation_deg = 3.0;
+  double keyframe_map_max_interval_s = 0.30;
+  bool keyframe_publish_only = true;
+  bool map_keyframe_initialized = false;
+  bool current_lio_map_keyframe = true;
+  V3D last_map_keyframe_pos = V3D::Zero();
+  M3D last_map_keyframe_rot = M3D::Identity();
+  double last_map_keyframe_time = -1.0;
+  std::atomic<unsigned long long> keyframe_dropped_lidar{0};
+  std::atomic<unsigned long long> keyframe_dropped_image{0};
+
   int img_en = 1, imu_int_frame = 3;
   bool normal_en = true;
   bool exposure_estimate_en = false;
