@@ -153,6 +153,9 @@ public:
   double last_map_keyframe_time = -1.0;
   std::atomic<unsigned long long> keyframe_dropped_lidar{0};
   std::atomic<unsigned long long> keyframe_dropped_image{0};
+  cv::Mat pending_keyframe_img;
+  double pending_keyframe_img_time = -1.0;
+  bool pending_keyframe_img_valid = false;
 
   int img_en = 1, imu_int_frame = 3;
   bool normal_en = true;
