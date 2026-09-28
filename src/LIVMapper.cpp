@@ -151,6 +151,26 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   viz_voxel_size = std::max(0.05, viz_voxel_size);
   viz_publish_interval = std::max(1, viz_publish_interval);
 
+  nh.param<bool>("keyframe/enabled", keyframe_realtime_en, false);
+  nh.param<int>("keyframe/lidar_pending_max", keyframe_lidar_buffer_max, 1);
+  nh.param<int>("keyframe/image_pending_max", keyframe_image_buffer_max, 2);
+  nh.param<double>("keyframe/map_translation_m", keyframe_map_translation_m, 0.10);
+  nh.param<double>("keyframe/map_rotation_deg", keyframe_map_rotation_deg, 3.0);
+  nh.param<double>("keyframe/map_max_interval_s", keyframe_map_max_interval_s, 0.30);
+  keyframe_lidar_buffer_max = std::max(1, keyframe_lidar_buffer_max);
+  keyframe_image_buffer_max = std::max(1, keyframe_image_buffer_max);
+  keyframe_map_translation_m = std::max(0.0, keyframe_map_translation_m);
+  keyframe_map_rotation_deg = std::max(0.0, keyframe_map_rotation_deg);
+  keyframe_map_max_interval_s = std::max(0.05, keyframe_map_max_interval_s);
+
+  if (keyframe_realtime_en)
+  {
+    ROS_WARN("KEYFRAME realtime mode enabled: LiDAR/image backlog is bounded; "
+             "IMU remains continuous. map keyframe=(%.2fm, %.1fdeg, %.2fs)",
+             keyframe_map_translation_m, keyframe_map_rotation_deg,
+             keyframe_map_max_interval_s);
+  }
+
   p_pre->blind_sqr = p_pre->blind * p_pre->blind;
   p_pre->max_range_sqr = p_pre->max_range * p_pre->max_range;
 }
@@ -880,6 +900,8 @@ void LIVMapper::run()
       continue;
     }
 
+    keyframe_estimator_busy.store(true, std::memory_order_relaxed);
+
     watchdog_phase.store(3);  // FIRST_FRAME
     handleFirstFrame();
 
@@ -889,6 +911,8 @@ void LIVMapper::run()
     watchdog_phase.store(5);  // ESTIMATION
     stateEstimationAndMapping();
     ++watchdog_estimator_cycles;
+
+    keyframe_estimator_busy.store(false, std::memory_order_relaxed);
     watchdog_phase.store(0);  // IDLE
   }
   savePCD();
@@ -973,6 +997,72 @@ void LIVMapper::imu_prop_callback(const ros::TimerEvent &e)
     pubImuPropOdom.publish(imu_prop_odom);
   }
   mtx_buffer_imu_prop.unlock();
+}
+
+void LIVMapper::trimRealtimeBuffersLocked()
+{
+  if (!keyframe_realtime_en) return;
+
+  // ONLY_LIO may have pinned the front LiDAR while waiting for IMU. Never
+  // delete that frame; bound only the pending frames behind it.
+  const size_t protected_lidar = lidar_pushed ? 1u : 0u;
+  const size_t lidar_limit =
+      protected_lidar + static_cast<size_t>(keyframe_lidar_buffer_max);
+  while (lid_raw_data_buffer.size() > lidar_limit)
+  {
+    const size_t idx = protected_lidar;
+    lid_raw_data_buffer.erase(lid_raw_data_buffer.begin() + idx);
+    lid_header_time_buffer.erase(lid_header_time_buffer.begin() + idx);
+    ++keyframe_dropped_lidar;
+  }
+
+  // In LIVO the image at the front is pinned between the LIO and VIO updates.
+  const bool protect_image =
+      (slam_mode_ == LIVO && LidarMeasures.lio_vio_flg == LIO &&
+       !img_buffer.empty());
+  const size_t protected_img = protect_image ? 1u : 0u;
+  const size_t image_limit =
+      protected_img + static_cast<size_t>(keyframe_image_buffer_max);
+  while (img_buffer.size() > image_limit)
+  {
+    const size_t idx = protected_img;
+    img_buffer.erase(img_buffer.begin() + idx);
+    img_time_buffer.erase(img_time_buffer.begin() + idx);
+    ++keyframe_dropped_images;
+  }
+}
+
+bool LIVMapper::shouldInsertMapKeyframe(double update_time,
+                                        double *trans_m,
+                                        double *rot_deg)
+{
+  if (!keyframe_realtime_en)
+  {
+    if (trans_m) *trans_m = 0.0;
+    if (rot_deg) *rot_deg = 0.0;
+    return true;
+  }
+
+  if (!map_keyframe_initialized)
+  {
+    if (trans_m) *trans_m = 0.0;
+    if (rot_deg) *rot_deg = 0.0;
+    return true;
+  }
+
+  const double translation =
+      (_state.pos_end - last_map_keyframe_state.pos_end).norm();
+  const M3D delta_rot =
+      last_map_keyframe_state.rot_end.transpose() * _state.rot_end;
+  const double rotation_deg = Log(delta_rot).norm() * 57.2957795131;
+  const double dt = update_time - last_map_keyframe_time;
+
+  if (trans_m) *trans_m = translation;
+  if (rot_deg) *rot_deg = rotation_deg;
+
+  return translation >= keyframe_map_translation_m ||
+         rotation_deg >= keyframe_map_rotation_deg ||
+         dt >= keyframe_map_max_interval_s;
 }
 
 void LIVMapper::transformLidar(const Eigen::Matrix3d rot, const Eigen::Vector3d t, const PointCloudXYZI::Ptr &input_cloud, PointCloudXYZI::Ptr &trans_cloud)
