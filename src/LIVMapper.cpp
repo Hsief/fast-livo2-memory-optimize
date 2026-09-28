@@ -1175,16 +1175,6 @@ void LIVMapper::standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
         ++keyframe_dropped_lidar;
       }
     }
-    if (keyframe_realtime_en && !lidar_pushed)
-    {
-      while (static_cast<int>(lid_raw_data_buffer.size()) >=
-             keyframe_lidar_buffer_max)
-      {
-        lid_raw_data_buffer.pop_front();
-        lid_header_time_buffer.pop_front();
-        ++keyframe_dropped_lidar;
-      }
-    }
     lid_raw_data_buffer.push_back(ptr);
     lid_header_time_buffer.push_back(cur_head_time);
     last_timestamp_lidar = cur_head_time;
@@ -1225,6 +1215,17 @@ void LIVMapper::livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg_i
       ROS_ERROR("lidar loop back, clear buffer");
       lid_raw_data_buffer.clear();
       lid_header_time_buffer.clear();
+    }
+
+    if (keyframe_realtime_en && !lidar_pushed)
+    {
+      while (static_cast<int>(lid_raw_data_buffer.size()) >=
+             keyframe_lidar_buffer_max)
+      {
+        lid_raw_data_buffer.pop_front();
+        lid_header_time_buffer.pop_front();
+        ++keyframe_dropped_lidar;
+      }
     }
 
     lid_raw_data_buffer.push_back(ptr);
