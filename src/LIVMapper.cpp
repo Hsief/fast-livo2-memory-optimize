@@ -491,18 +491,57 @@ void LIVMapper::handleLIO()
     M3D point_crossmat = voxelmap_manager->cross_mat_list_[i];
     M3D var = voxelmap_manager->body_cov_list_[i];
     var = (_state.rot_end * extR) * var * (_state.rot_end * extR).transpose() +
-          (-point_crossmat) * _state.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose() + _state.cov.block<3, 3>(3, 3);
+          (-point_crossmat) * _state.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose() +
+          _state.cov.block<3, 3>(3, 3);
     voxelmap_manager->pv_list_[i].var = var;
   }
-  voxelmap_manager->UpdateVoxelMap(voxelmap_manager->pv_list_);
+
+  double keyframe_trans_m = 0.0;
+  double keyframe_rot_deg = 0.0;
+  const double keyframe_time = LidarMeasures.last_lio_update_time;
+  const bool insert_map_keyframe =
+      shouldInsertMapKeyframe(keyframe_time, &keyframe_trans_m,
+                              &keyframe_rot_deg);
+
+  if (insert_map_keyframe)
+  {
+    voxelmap_manager->UpdateVoxelMap(voxelmap_manager->pv_list_);
+
+    if (voxelmap_manager->config_setting_.map_sliding_en)
+      voxelmap_manager->mapSliding();
+
+    if (keyframe_realtime_en)
+    {
+      last_map_keyframe_state = _state;
+      last_map_keyframe_time = keyframe_time;
+      map_keyframe_initialized = true;
+      ++keyframe_map_insertions;
+      ROS_INFO_THROTTLE(
+          1.0,
+          "[KF_MAP] insert trans=%.3fm rot=%.2fdeg dt=%.3fs inserted=%llu skipped=%llu",
+          keyframe_trans_m, keyframe_rot_deg,
+          last_map_keyframe_time > 0.0
+              ? std::max(0.0, keyframe_time - last_map_keyframe_time)
+              : 0.0,
+          static_cast<unsigned long long>(keyframe_map_insertions.load()),
+          static_cast<unsigned long long>(keyframe_map_skips.load()));
+    }
+  }
+  else
+  {
+    ++keyframe_map_skips;
+    ROS_INFO_THROTTLE(
+        1.0,
+        "[KF_MAP] skip trans=%.3fm rot=%.2fdeg dt=%.3fs thresholds=(%.2fm %.1fdeg %.2fs)",
+        keyframe_trans_m, keyframe_rot_deg,
+        std::max(0.0, keyframe_time - last_map_keyframe_time),
+        keyframe_map_translation_m, keyframe_map_rotation_deg,
+        keyframe_map_max_interval_s);
+  }
+
   _pv_list = voxelmap_manager->pv_list_;
   
   double t4 = omp_get_wtime();
-
-  if(voxelmap_manager->config_setting_.map_sliding_en)
-  {
-    voxelmap_manager->mapSliding();
-  }
   
   PointCloudXYZI::Ptr laserCloudFullRes(dense_map_en ? feats_undistort : feats_down_body);
   int size = laserCloudFullRes->points.size();
