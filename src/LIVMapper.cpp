@@ -1165,7 +1165,7 @@ void LIVMapper::standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
       lid_raw_data_buffer.clear();
       lid_header_time_buffer.clear();
     }
-    if (keyframe_realtime_en)
+    if (keyframe_realtime_en && !lidar_pushed)
     {
       while (static_cast<int>(lid_raw_data_buffer.size()) >=
              keyframe_lidar_buffer_max)
@@ -1175,7 +1175,7 @@ void LIVMapper::standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
         ++keyframe_dropped_lidar;
       }
     }
-    if (keyframe_realtime_en)
+    if (keyframe_realtime_en && !lidar_pushed)
     {
       while (static_cast<int>(lid_raw_data_buffer.size()) >=
              keyframe_lidar_buffer_max)
