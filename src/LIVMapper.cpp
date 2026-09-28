@@ -512,6 +512,10 @@ void LIVMapper::handleLIO()
 
     if (keyframe_realtime_en)
     {
+      const double keyframe_dt =
+          map_keyframe_initialized
+              ? std::max(0.0, keyframe_time - last_map_keyframe_time)
+              : 0.0;
       last_map_keyframe_state = _state;
       last_map_keyframe_time = keyframe_time;
       map_keyframe_initialized = true;
@@ -519,10 +523,7 @@ void LIVMapper::handleLIO()
       ROS_INFO_THROTTLE(
           1.0,
           "[KF_MAP] insert trans=%.3fm rot=%.2fdeg dt=%.3fs inserted=%llu skipped=%llu",
-          keyframe_trans_m, keyframe_rot_deg,
-          last_map_keyframe_time > 0.0
-              ? std::max(0.0, keyframe_time - last_map_keyframe_time)
-              : 0.0,
+          keyframe_trans_m, keyframe_rot_deg, keyframe_dt,
           static_cast<unsigned long long>(keyframe_map_insertions.load()),
           static_cast<unsigned long long>(keyframe_map_skips.load()));
     }
@@ -621,6 +622,7 @@ void LIVMapper::watchdogLoop()
 
   out << "wall_s,phase,callbacks_last_cycle,estimator_cycles,"
       << "buffer_lock_ok,lidar_buf,img_buf,imu_buf,"
+      << "kf_busy,kf_drop_lidar,kf_drop_img,kf_map_insert,kf_map_skip,"
       << "bg_lock_ok,bg_jobs,rss_kb,vmswap_kb,mem_available_kb\n";
   out.flush();
   ROS_INFO("[WATCHDOG] runtime log: %s", path.c_str());
@@ -685,6 +687,11 @@ void LIVMapper::watchdogLoop()
         << watchdog_estimator_cycles.load() << ','
         << buffer_lock_ok << ','
         << lidar_buf << ',' << img_buf << ',' << imu_buf << ','
+        << (keyframe_estimator_busy.load(std::memory_order_relaxed) ? 1 : 0) << ','
+        << keyframe_dropped_lidar.load() << ','
+        << keyframe_dropped_images.load() << ','
+        << keyframe_map_insertions.load() << ','
+        << keyframe_map_skips.load() << ','
         << bg_lock_ok << ',' << bg_jobs << ','
         << read_status_kb("VmRSS:") << ','
         << read_status_kb("VmSwap:") << ','
