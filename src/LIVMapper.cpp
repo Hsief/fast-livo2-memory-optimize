@@ -1142,6 +1142,17 @@ void LIVMapper::standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
   if (!lidar_en) return;
 
   const double cur_head_time = msg->header.stamp.toSec() + lidar_time_offset;
+  if (keyframe_realtime_en &&
+      keyframe_estimator_busy.load(std::memory_order_relaxed))
+  {
+    ++keyframe_dropped_lidar;
+    ROS_WARN_THROTTLE(
+        2.0,
+        "[KF_DROP] estimator busy; dropping LiDAR before preprocessing. dropped_lidar=%llu",
+        static_cast<unsigned long long>(keyframe_dropped_lidar.load()));
+    return;
+  }
+
   PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
 
   // Preprocessing is CPU-heavy but does not need the shared sensor-buffer lock.
@@ -1159,6 +1170,7 @@ void LIVMapper::standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
     lid_raw_data_buffer.push_back(ptr);
     lid_header_time_buffer.push_back(cur_head_time);
     last_timestamp_lidar = cur_head_time;
+    trimRealtimeBuffersLocked();
   }
   sig_buffer.notify_all();
 }
@@ -1169,6 +1181,17 @@ void LIVMapper::livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg_i
 
   const livox_ros_driver::CustomMsg::ConstPtr &msg = msg_in;
   const double cur_head_time = msg->header.stamp.toSec();
+
+  if (keyframe_realtime_en &&
+      keyframe_estimator_busy.load(std::memory_order_relaxed))
+  {
+    ++keyframe_dropped_lidar;
+    ROS_WARN_THROTTLE(
+        2.0,
+        "[KF_DROP] estimator busy; dropping Livox frame before preprocessing. dropped_lidar=%llu",
+        static_cast<unsigned long long>(keyframe_dropped_lidar.load()));
+    return;
+  }
 
   PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
   // Keep preprocessing outside mtx_buffer so image/IMU ingestion and the
@@ -1201,6 +1224,7 @@ void LIVMapper::livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg_i
     lid_raw_data_buffer.push_back(ptr);
     lid_header_time_buffer.push_back(cur_head_time);
     last_timestamp_lidar = cur_head_time;
+    trimRealtimeBuffersLocked();
   }
 
   sig_buffer.notify_all();
@@ -1286,6 +1310,17 @@ void LIVMapper::img_cbk(const sensor_msgs::ImageConstPtr &msg_in)
 {
   if (!img_en) return;
 
+  if (keyframe_realtime_en &&
+      keyframe_estimator_busy.load(std::memory_order_relaxed))
+  {
+    ++keyframe_dropped_images;
+    ROS_WARN_THROTTLE(
+        2.0,
+        "[KF_DROP] estimator busy; dropping image before resize/copy. dropped_images=%llu",
+        static_cast<unsigned long long>(keyframe_dropped_images.load()));
+    return;
+  }
+
   if (hilti_en)
   {
     static int frame_counter = 0;
@@ -1322,6 +1357,7 @@ void LIVMapper::img_cbk(const sensor_msgs::ImageConstPtr &msg_in)
     img_buffer.push_back(img_cur);
     img_time_buffer.push_back(msg_header_time);
     last_timestamp_img = msg_header_time;
+    trimRealtimeBuffersLocked();
   }
 
   sig_buffer.notify_all();
@@ -1333,6 +1369,22 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
   if (lid_raw_data_buffer.empty() && lidar_en) return false;
   if (img_buffer.empty() && img_en) return false;
   if (imu_buffer.empty() && imu_en) return false;
+
+  if (keyframe_realtime_en && slam_mode_ == LIVO &&
+      (meas.lio_vio_flg == WAIT || meas.lio_vio_flg == VIO) &&
+      !lid_header_time_buffer.empty())
+  {
+    const double oldest_kept_lidar = lid_header_time_buffer.front();
+    while (!img_buffer.empty() &&
+           img_time_buffer.front() + exposure_time_init <
+               oldest_kept_lidar)
+    {
+      img_buffer.pop_front();
+      img_time_buffer.pop_front();
+      ++keyframe_dropped_images;
+    }
+    if (img_buffer.empty()) return false;
+  }
 
   switch (slam_mode_)
   {
