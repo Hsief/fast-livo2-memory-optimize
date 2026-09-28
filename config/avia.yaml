@@ -69,6 +69,21 @@ local_map:
   half_map_size: 50
   sliding_thresh: 8
 
+# Xavier NX realtime mode:
+# - while LIO/VIO is running, new LiDAR/image frames are dropped before heavy
+#   preprocessing/copying;
+# - IMU is NEVER dropped by this scheduler and is integrated continuously
+#   across the larger time gap to the next accepted frame;
+# - LiDAR pose update still runs for every accepted frame, while voxel-map
+#   insertion is keyframed.
+keyframe:
+  enabled: true
+  lidar_pending_max: 1
+  image_pending_max: 2
+  map_translation_m: 0.10
+  map_rotation_deg: 3.0
+  map_max_interval_s: 0.30
+
 uav:
   imu_rate_odom: false
   gravity_align_en: false
