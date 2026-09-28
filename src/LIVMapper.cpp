@@ -387,13 +387,75 @@ void LIVMapper::handleVIO()
   //   visual_sub_map->push_back(temp_map);
   // }
 
-  publish_frame_world(pubLaserCloudFullRes, vio_manager);
+  if (!keyframe_realtime_en ||
+      !keyframe_publish_only ||
+      current_lio_map_keyframe)
+  {
+    publish_frame_world(pubLaserCloudFullRes, vio_manager);
+  }
+  else
+  {
+    PointCloudXYZI().swap(*pcl_wait_pub);
+    PointCloudXYZI().swap(*pcl_w_wait_pub);
+  }
   publish_img_rgb(pubImage, vio_manager);
 
   euler_cur = RotMtoEuler(_state.rot_end);
   fout_out << std::setw(20) << LidarMeasures.last_lio_update_time - _first_lidar_time << " " << euler_cur.transpose() * 57.3 << " "
             << _state.pos_end.transpose() << " " << _state.vel_end.transpose() << " " << _state.bias_g.transpose() << " "
             << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose() << " " << feats_undistort->points.size() << '\n';
+}
+
+bool LIVMapper::shouldInsertMapKeyframe(double stamp)
+{
+  if (!keyframe_realtime_en)
+  {
+    current_lio_map_keyframe = true;
+    return true;
+  }
+
+  if (!map_keyframe_initialized)
+  {
+    map_keyframe_initialized = true;
+    last_map_keyframe_pos = _state.pos_end;
+    last_map_keyframe_rot = _state.rot_end;
+    last_map_keyframe_time = stamp;
+    current_lio_map_keyframe = true;
+    return true;
+  }
+
+  const double trans =
+      (_state.pos_end - last_map_keyframe_pos).norm();
+  const M3D delta_rot =
+      last_map_keyframe_rot.transpose() * _state.rot_end;
+  const double rot_deg =
+      Log(delta_rot).norm() * 57.2957795131;
+  const double dt =
+      std::max(0.0, stamp - last_map_keyframe_time);
+
+  const bool is_keyframe =
+      trans >= keyframe_map_translation_m ||
+      rot_deg >= keyframe_map_rotation_deg ||
+      dt >= keyframe_map_max_interval_s;
+
+  current_lio_map_keyframe = is_keyframe;
+  if (is_keyframe)
+  {
+    last_map_keyframe_pos = _state.pos_end;
+    last_map_keyframe_rot = _state.rot_end;
+    last_map_keyframe_time = stamp;
+  }
+
+  ROS_INFO_THROTTLE(
+      1.0,
+      "[KF_MAP] keyframe=%d dp=%.3fm dR=%.2fdeg dt=%.3fs thresholds=(%.3fm, %.2fdeg, %.3fs)",
+      static_cast<int>(is_keyframe),
+      trans, rot_deg, dt,
+      keyframe_map_translation_m,
+      keyframe_map_rotation_deg,
+      keyframe_map_max_interval_s);
+
+  return is_keyframe;
 }
 
 void LIVMapper::handleLIO() 
@@ -433,6 +495,13 @@ void LIVMapper::handleLIO()
   voxelmap_manager->StateEstimation(state_propagat);
   _state = voxelmap_manager->state_;
   _pv_list = voxelmap_manager->pv_list_;
+
+  const double lio_stamp =
+      LidarMeasures.measures.empty()
+          ? LidarMeasures.last_lio_update_time
+          : LidarMeasures.measures.back().lio_time;
+  const bool map_keyframe =
+      shouldInsertMapKeyframe(lio_stamp);
 
   double t2 = omp_get_wtime();
 
@@ -488,12 +557,16 @@ void LIVMapper::handleLIO()
           (-point_crossmat) * _state.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose() + _state.cov.block<3, 3>(3, 3);
     voxelmap_manager->pv_list_[i].var = var;
   }
-  voxelmap_manager->UpdateVoxelMap(voxelmap_manager->pv_list_);
+  if (map_keyframe)
+  {
+    voxelmap_manager->UpdateVoxelMap(voxelmap_manager->pv_list_);
+  }
   _pv_list = voxelmap_manager->pv_list_;
   
   double t4 = omp_get_wtime();
 
-  if(voxelmap_manager->config_setting_.map_sliding_en)
+  if (map_keyframe &&
+      voxelmap_manager->config_setting_.map_sliding_en)
   {
     voxelmap_manager->mapSliding();
   }
@@ -511,8 +584,13 @@ void LIVMapper::handleLIO()
   }
   *pcl_w_wait_pub = *laserCloudWorld;
 
-  publish_frame_world(pubLaserCloudFullRes, vio_manager);
-  if (pub_effect_point_en) publish_effect_world(pubLaserCloudEffect, voxelmap_manager->ptpl_list_);
+  if (!keyframe_realtime_en ||
+      !keyframe_publish_only ||
+      map_keyframe)
+    publish_frame_world(pubLaserCloudFullRes, vio_manager);
+
+  if (pub_effect_point_en)
+    publish_effect_world(pubLaserCloudEffect, voxelmap_manager->ptpl_list_);
   if (voxelmap_manager->config_setting_.is_pub_plane_map_) voxelmap_manager->pubVoxelMap();
   publish_path(pubPath);
   publish_mavros(mavros_pose_publisher);
@@ -531,10 +609,14 @@ void LIVMapper::handleLIO()
   // printf("\033[1;36m[ LIO mapping time ]: current scan: icp: %0.6f secs, map incre: %0.6f secs, total: %0.6f secs.\033[0m\n"
   //         "\033[1;36m[ LIO mapping time ]: average: icp: %0.6f secs, map incre: %0.6f secs, total: %0.6f secs.\033[0m\n",
   //         t2 - t1, t4 - t3, t4 - t0, aver_time_icp, aver_time_map_inre, aver_time_consu);
-  ROS_INFO_THROTTLE(1.0,
-                    "[NX_LIO] down=%.4fs icp=%.4fs map=%.4fs total=%.4fs avg=%.4fs raw=%zu down_pts=%d",
-                    t_down - t0, t2 - t1, t4 - t3, t4 - t0, aver_time_consu,
-                    feats_undistort->size(), feats_down_size);
+  ROS_INFO_THROTTLE(
+      1.0,
+      "[NX_LIO] down=%.4fs icp=%.4fs map=%.4fs total=%.4fs avg=%.4fs raw=%zu down_pts=%d map_kf=%d dropped_lidar=%llu dropped_img=%llu",
+      t_down - t0, t2 - t1, t4 - t3, t4 - t0, aver_time_consu,
+      feats_undistort->size(), feats_down_size,
+      static_cast<int>(map_keyframe),
+      static_cast<unsigned long long>(keyframe_dropped_lidar.load()),
+      static_cast<unsigned long long>(keyframe_dropped_image.load()));
 
   euler_cur = RotMtoEuler(_state.rot_end);
   fout_out << std::setw(20) << LidarMeasures.last_lio_update_time - _first_lidar_time << " " << euler_cur.transpose() * 57.3 << " "
