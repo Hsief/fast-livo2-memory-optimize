@@ -1564,8 +1564,29 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
         // imu_buffer.front()->header.stamp.toSec());
       }
     
-      *(meas.pcl_proc_cur) = *(meas.pcl_proc_next);
-      PointCloudXYZI().swap(*meas.pcl_proc_next);
+      if (keyframe_realtime_en)
+      {
+        // Keep only the newest raw LiDAR scan that starts no later than the
+        // selected estimator timestamp. Older scans are intentionally skipped;
+        // the complete time gap is still propagated by the IMU sequence above.
+        while (lid_raw_data_buffer.size() > 1 &&
+               lid_header_time_buffer[1] <= img_capture_time)
+        {
+          lid_raw_data_buffer.pop_front();
+          lid_header_time_buffer.pop_front();
+          ++keyframe_dropped_lidar;
+        }
+
+        // Do not carry a tail from an old skipped scan into the new keyframe.
+        // Each realtime LIO update therefore contains at most one raw scan.
+        PointCloudXYZI().swap(*meas.pcl_proc_cur);
+        PointCloudXYZI().swap(*meas.pcl_proc_next);
+      }
+      else
+      {
+        *(meas.pcl_proc_cur) = *(meas.pcl_proc_next);
+        PointCloudXYZI().swap(*meas.pcl_proc_next);
+      }
 
       int lid_frame_num = lid_raw_data_buffer.size();
       int max_size = meas.pcl_proc_cur->size() + 24000 * lid_frame_num;
