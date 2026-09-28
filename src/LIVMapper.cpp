@@ -658,7 +658,8 @@ void LIVMapper::watchdogLoop()
 
   out << "wall_s,phase,callbacks_last_cycle,estimator_cycles,"
       << "buffer_lock_ok,lidar_buf,img_buf,imu_buf,"
-      << "bg_lock_ok,bg_jobs,rss_kb,vmswap_kb,mem_available_kb\n";
+      << "bg_lock_ok,bg_jobs,dropped_lidar,dropped_img,"
+      << "rss_kb,vmswap_kb,mem_available_kb\n";
   out.flush();
   ROS_INFO("[WATCHDOG] runtime log: %s", path.c_str());
 
@@ -723,6 +724,8 @@ void LIVMapper::watchdogLoop()
         << buffer_lock_ok << ','
         << lidar_buf << ',' << img_buf << ',' << imu_buf << ','
         << bg_lock_ok << ',' << bg_jobs << ','
+        << keyframe_dropped_lidar.load() << ','
+        << keyframe_dropped_image.load() << ','
         << read_status_kb("VmRSS:") << ','
         << read_status_kb("VmSwap:") << ','
         << read_mem_available_kb() << '\n';
@@ -1373,7 +1376,10 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
       !(keyframe_realtime_en && pending_keyframe_img_valid &&
         meas.lio_vio_flg == LIO))
     return false;
-  if (imu_buffer.empty() && imu_en) return false;
+  if (imu_en && imu_buffer.empty() &&
+      !(keyframe_realtime_en && pending_keyframe_img_valid &&
+        meas.lio_vio_flg == LIO))
+    return false;
 
   switch (slam_mode_)
   {
@@ -1642,10 +1648,18 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas)
   case ONLY_LO:
   {
     if (!lidar_pushed) 
-    { 
-      // If not in lidar scan, need to generate new meas
-      if (lid_raw_data_buffer.empty())  return false;
-      meas.lidar = lid_raw_data_buffer.front(); // push the first lidar topic
+    {
+      if (lid_raw_data_buffer.empty()) return false;
+      if (keyframe_realtime_en)
+      {
+        while (lid_raw_data_buffer.size() > 1)
+        {
+          lid_raw_data_buffer.pop_front();
+          lid_header_time_buffer.pop_front();
+          ++keyframe_dropped_lidar;
+        }
+      }
+      meas.lidar = lid_raw_data_buffer.front();
       meas.lidar_frame_beg_time = lid_header_time_buffer.front(); // generate lidar_beg_time
       meas.lidar_frame_end_time  = meas.lidar_frame_beg_time + meas.lidar->points.back().curvature / double(1000); // calc lidar scan end time
       lidar_pushed = true;             
