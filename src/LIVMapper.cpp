@@ -91,6 +91,20 @@ void LIVMapper::readParameters(ros::NodeHandle &nh)
   nh.param<bool>("uav/imu_rate_odom", imu_prop_enable, false);
   nh.param<bool>("uav/gravity_align_en", gravity_align_en, false);
 
+  nh.param<bool>("keyframe/realtime_en", keyframe_realtime_en, true);
+  nh.param<int>("keyframe/lidar_buffer_max", keyframe_lidar_buffer_max, 3);
+  nh.param<int>("keyframe/image_buffer_max", keyframe_image_buffer_max, 3);
+  nh.param<double>("keyframe/map_translation_m", keyframe_map_translation_m, 0.10);
+  nh.param<double>("keyframe/map_rotation_deg", keyframe_map_rotation_deg, 3.0);
+  nh.param<double>("keyframe/map_max_interval_s", keyframe_map_max_interval_s, 0.30);
+  nh.param<bool>("keyframe/publish_only_keyframes", keyframe_publish_only, true);
+
+  keyframe_lidar_buffer_max = std::max(1, keyframe_lidar_buffer_max);
+  keyframe_image_buffer_max = std::max(1, keyframe_image_buffer_max);
+  keyframe_map_translation_m = std::max(0.0, keyframe_map_translation_m);
+  keyframe_map_rotation_deg = std::max(0.0, keyframe_map_rotation_deg);
+  keyframe_map_max_interval_s = std::max(0.01, keyframe_map_max_interval_s);
+
   nh.param<string>("evo/seq_name", seq_name, "01");
   nh.param<bool>("evo/pose_output_en", pose_output_en, false);
   nh.param<double>("imu/gyr_cov", gyr_cov, 1.0);
