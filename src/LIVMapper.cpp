@@ -1080,6 +1080,26 @@ void LIVMapper::standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
       lid_raw_data_buffer.clear();
       lid_header_time_buffer.clear();
     }
+    if (keyframe_realtime_en)
+    {
+      while (static_cast<int>(lid_raw_data_buffer.size()) >=
+             keyframe_lidar_buffer_max)
+      {
+        lid_raw_data_buffer.pop_front();
+        lid_header_time_buffer.pop_front();
+        ++keyframe_dropped_lidar;
+      }
+    }
+    if (keyframe_realtime_en)
+    {
+      while (static_cast<int>(lid_raw_data_buffer.size()) >=
+             keyframe_lidar_buffer_max)
+      {
+        lid_raw_data_buffer.pop_front();
+        lid_header_time_buffer.pop_front();
+        ++keyframe_dropped_lidar;
+      }
+    }
     lid_raw_data_buffer.push_back(ptr);
     lid_header_time_buffer.push_back(cur_head_time);
     last_timestamp_lidar = cur_head_time;
@@ -1243,6 +1263,16 @@ void LIVMapper::img_cbk(const sensor_msgs::ImageConstPtr &msg_in)
     // Same image subscription is serialized by roscpp, but re-check for
     // robustness before committing to the shared FIFO.
     if (msg_header_time <= last_timestamp_img) return;
+    if (keyframe_realtime_en)
+    {
+      while (static_cast<int>(img_buffer.size()) >=
+             keyframe_image_buffer_max)
+      {
+        img_buffer.pop_front();
+        img_time_buffer.pop_front();
+        ++keyframe_dropped_image;
+      }
+    }
     img_buffer.push_back(img_cur);
     img_time_buffer.push_back(msg_header_time);
     last_timestamp_img = msg_header_time;
